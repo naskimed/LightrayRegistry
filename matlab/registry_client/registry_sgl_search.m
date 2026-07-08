@@ -61,22 +61,32 @@ function registry_sgl_search(job_json)
     K_values = job.K_values(:)';
     per_K = struct('K', {}, 'sep_score', {}, 'z', {}, 'n_blobs', {}, 'degenerate', {}, ...
                    'params', {}, 'blob_pf', {}, 'blob_z', {});
+    runs_per_k = 1;
+    if isfield(job.budget, 'runs_per_k'), runs_per_k = job.budget.runs_per_k; end
     t_all = tic;
     for K = K_values
-        rng(job.rng_seed + K);
-        obj = @(p) -sgl_sep(p, X, profits, dates, gate, nu, K);
-        bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
-            'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
-            'AcquisitionFunctionName', 'expected-improvement-plus', ...
-            'UseParallel', false, 'Verbose', 0, 'PlotFcn', []);
-        sep_best = -bo.MinObjective;
-        pbest = bestPoint(bo);
+        sep_best = -inf; pbest = [];
+        for r = 1:runs_per_k                    % replicate bayesopt runs; keep the best (GP is stochastic)
+            rng(job.rng_seed + 1000*K + r);
+            obj = @(p) -sgl_sep(p, X, profits, dates, gate, nu, K);
+            bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
+                'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
+                'AcquisitionFunctionName', 'expected-improvement-plus', ...
+                'UseParallel', false, 'Verbose', 0, 'PlotFcn', []);
+            if -bo.MinObjective > sep_best, sep_best = -bo.MinObjective; pbest = bestPoint(bo); end
+        end
         ev = sgl_full(pbest, X, profits, dates, gate, nu, K);   % z + blobs at the winner
         per_K(end+1) = struct('K', K, 'sep_score', sep_best, 'z', ev.z, ...
             'n_blobs', ev.n_blobs, 'degenerate', ev.degenerate, 'params', ev.params, ...
             'blob_pf', ev.blob_pf, 'blob_z', ev.blob_z);
-        fprintf('  K=%2d  sep=%.2f  z=%.3f  blobs=%d  (%s sig=%.1f k=%d)\n', K, sep_best, ...
-            ev.z, ev.n_blobs, ev.params.kernel, ev.params.sigma, ev.params.k_nbrs);
+        fprintf('  K=%2d  sep=%.2f  z=%.3f  blobs=%d  (%s sig=%.1f k=%d)  [%d runs, %.0fs]\n', K, ...
+            sep_best, ev.z, ev.n_blobs, ev.params.kernel, ev.params.sigma, ev.params.k_nbrs, runs_per_k, toc(t_all));
+        if isfield(job, 'progress_path')        % incremental per-K checkpoint (survives a mid-run death)
+            pfid = fopen(job.progress_path, 'a');
+            fprintf(pfid, '%s\n', jsonencode(struct('K',K,'sep',sep_best,'z',ev.z, ...
+                'n_blobs',ev.n_blobs,'kernel',ev.params.kernel,'elapsed_s',toc(t_all))));
+            fclose(pfid);
+        end
     end
 
     [~, ord] = sort([per_K.sep_score], 'descend');
