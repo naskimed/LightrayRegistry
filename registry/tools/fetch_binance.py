@@ -55,6 +55,11 @@ def _download(url: str) -> bytes | None:
 
 
 def _parse_zip(raw: bytes):
+    """Parse ONE monthly/daily dump into a normalized frame with a UTC `ts` column.
+
+    The timestamp unit is detected PER FILE — Binance switched ms → microseconds in early 2025,
+    so a global detection corrupts the mixed-era concat (year-58485 bug). Each month is internally
+    consistent, so we normalize here, before concat."""
     import pandas as pd
     zf = zipfile.ZipFile(io.BytesIO(raw))
     name = zf.namelist()[0]
@@ -65,10 +70,13 @@ def _parse_zip(raw: bytes):
                      header=0 if has_header else None,
                      names=None if has_header else KLINE_COLS)
     if has_header:
-        df = df.rename(columns={c: c for c in df.columns})
-        # normalize header variants to our names (binance uses these exact snake_case names)
         df.columns = [c.strip().lower() for c in df.columns]
-    return df
+    ot = df["open_time"].astype("int64")
+    unit = "us" if int(ot.iloc[0]) > 1_000_000_000_000_000 else "ms"   # per-file
+    out = df[["open", "high", "low", "close", "volume", "quote_volume",
+              "trades", "taker_buy_base", "taker_buy_quote"]].copy()
+    out.insert(0, "ts", pd.to_datetime(ot, unit=unit, utc=True))
+    return out
 
 
 def fetch(symbol: str, interval: str, start: str, out: Path, verbose: bool = True):
@@ -98,14 +106,8 @@ def fetch(symbol: str, interval: str, start: str, out: Path, verbose: bool = Tru
         raise RuntimeError(f"missing months (no monthly OR daily dump): {missing} — refusing to "
                            "register a snapshot with silent gaps")
 
-    df = pd.concat(frames, ignore_index=True)
-    df["open_time"] = df["open_time"].astype("int64")
-    # unit detection: microseconds (>1e15) vs milliseconds (~1e12)
-    unit = "us" if int(df["open_time"].iloc[len(df) // 2]) > 1_000_000_000_000_000 else "ms"
-    ts = pd.to_datetime(df["open_time"], unit=unit, utc=True)
-    out_df = df[["open", "high", "low", "close", "volume", "quote_volume",
-                 "trades", "taker_buy_base", "taker_buy_quote"]].copy()
-    out_df.insert(0, "ts", ts)
+    # frames are ALREADY normalized (each carries a UTC `ts` from its own per-file unit)
+    out_df = pd.concat(frames, ignore_index=True)
     out_df = (out_df.drop_duplicates(subset="ts")
                     .sort_values("ts")
                     .reset_index(drop=True))
@@ -118,7 +120,7 @@ def fetch(symbol: str, interval: str, start: str, out: Path, verbose: bool = Tru
     out_df.to_parquet(out, index=False)
     if verbose:
         print(f"  rows={len(out_df):,}  range={out_df['ts'].iloc[0]} → {out_df['ts'].iloc[-1]}  "
-              f"unit={unit}  → {out}")
+              f"→ {out}")
     return out_df
 
 
