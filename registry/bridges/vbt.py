@@ -31,8 +31,10 @@ POPULATION_COLUMNS = [
     "incumbent_cluster_id", "legacy_row_index", "mt5_deal_in", "mt5_deal_out",
 ]
 POPULATION_DTYPES = {
-    "trade_id": "string", "side": "string", "entry_ts": "timestamp_us",
-    "exit_ts": "timestamp_us", "entry_price": "float64", "exit_price": "float64",
+    # entry_ts/exit_ts are ISO datetime STRINGS as the engines emit them (deterministic,
+    # human-readable, parquet-stored) — the digest hashes the string bytes, not a µs int.
+    "trade_id": "string", "side": "string", "entry_ts": "string",
+    "exit_ts": "string", "entry_price": "float64", "exit_price": "float64",
     "volume": "float64", "profit": "float64", "exit_reason": "string",
     "f_hour": "float64", "f_ema": "float64", "f_mom": "float64", "f_dv": "float64",
     "f_iv": "float64", "f_hurst": "float64", "incumbent_cluster_id": "int64",
