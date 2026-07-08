@@ -79,6 +79,10 @@ class WhiteboxSpec:
     trading_days: tuple | None = None   # server-time weekdays allowed to ENTER (Mon=0..Sun=6);
                                         # e.g. (5,) = server-Saturday only (the incumbent mask).
                                         # None = block_monday default (legacy reversal).
+    risk_pct: float = 0.0               # MaxRiskPerTrade% money-management (0 = unit qty). >0 =
+                                        # constant-$-risk sizing (the EA's). EDGE-INVARIANT: `profit`
+                                        # (R-multiple) is unchanged; only `profit_usd` scales with it.
+    risk_deposit: float = 10000.0       # balance the risk_pct sizes against
 
 
 # ---- data: registry parquet OR MT3 CSV → (signal_5m, fine_1m) with capitalized OHLC ----------
@@ -110,8 +114,10 @@ def _build(spec: WhiteboxSpec):
                                 weekday_only=spec.weekday_only,
                                 phantom_first_bar=spec.phantom_first_bar)
     ctx = lm["IndicatorEngine"](cfg).build(sig)
-    strat = lm["build_strategy"](spec.strategy,
-                                 {"sl_atr_mult": spec.sl_atr_mult, "tp_atr_mult": spec.tp_atr_mult})
+    sp = {"sl_atr_mult": spec.sl_atr_mult, "tp_atr_mult": spec.tp_atr_mult}
+    if spec.risk_pct > 0:            # constant-$-risk position sizing (the EA's money management)
+        sp.update({"risk_percentage": spec.risk_pct, "risk_deposit": spec.risk_deposit})
+    strat = lm["build_strategy"](spec.strategy, sp)
     features = lm["FeatureSet"].from_config(FEATURE_NAMES)
     return lm, ctx, strat, features, fine
 
