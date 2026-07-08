@@ -34,6 +34,7 @@ class WindowsetRegister(BaseModel):
     model_config = ConfigDict(extra="forbid")
     windowset_id: str                        # ws_<name>
     data_contract: str
+    lineage_id: Optional[str] = None         # explicit lineage join; default = lin::<windowset_id>
     windows: list[Window]
     exclusions: list[dict] = Field(default_factory=list)   # [{range, rationale}]
     embargo: Embargo
