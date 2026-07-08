@@ -247,6 +247,49 @@ def _engine_git() -> str:
         return "nogit"
 
 
+def score_population(rows: list[dict], side: str = "sell") -> dict:
+    """Cheap Stage-1 scorecard on the R-multiple population. Because `profit` is the R-multiple,
+    these rank the EDGE independent of position sizing — so the sweep can compare exit/param
+    choices on equal footing (the risk-management/sizing overlay is a separate, edge-invariant
+    knob). expectancy_R = mean risk-adjusted return per trade (the per-trade edge)."""
+    import numpy as np
+    R = np.array([float(r["profit"]) for r in rows if r["side"] == side], dtype=float)
+    n = int(R.size)
+    if n == 0:
+        return {"n": 0, "win_rate": float("nan"), "expectancy_R": float("nan"), "pf": float("nan"),
+                "sharpe_R": float("nan"), "total_R": 0.0, "avg_win_R": float("nan"), "avg_loss_R": float("nan")}
+    wins, losses = R[R > 0], R[R <= 0]
+    gl = float(-losses.sum())
+    return {
+        "n": n, "win_rate": float((R > 0).mean()), "expectancy_R": float(R.mean()),
+        "pf": (float(wins.sum() / gl) if gl > 0 else (10.0 if wins.sum() > 0 else float("nan"))),
+        "sharpe_R": (float(R.mean() / R.std()) if R.std() > 0 else float("nan")),
+        "total_R": float(R.sum()),
+        "avg_win_R": (float(wins.mean()) if wins.size else float("nan")),
+        "avg_loss_R": (float(losses.mean()) if losses.size else float("nan")),
+    }
+
+
+def whitebox_sweep(base: WhiteboxSpec, grid: dict, side: str = "sell",
+                   rank: str = "expectancy_R") -> list[dict]:
+    """The Stage-1 population loop: sweep whitebox parameters, score each config's R-multiple
+    population. This is HOW the pipeline discovers strategy/exit/parameter settings — the things
+    found manually (e.g. the 1:1 exit reward:risk) AND configurations never tried — instead of a
+    human reverse-engineering them. `grid` maps WhiteboxSpec field -> list of values; every
+    combination is generated and scored. Ranked descending by `rank`. (vbt_grid_sweep is the
+    ~26x-faster vectorbt path for the same grid; this is the validated single-config loop.)"""
+    from dataclasses import replace
+    from itertools import product
+    keys = list(grid)
+    out = []
+    for combo in product(*[grid[k] for k in keys]):
+        params = dict(zip(keys, combo))
+        sc = score_population(run_population(replace(base, **params))["rows"], side)
+        out.append({"params": params, **sc})
+    out.sort(key=lambda r: (r[rank] if r[rank] == r[rank] else -1e18), reverse=True)  # NaN last
+    return out
+
+
 def vbt_grid_sweep(base: WhiteboxSpec, grid: dict[str, list], out_dir: str | Path) -> dict:
     """Whole-grid parameter sweep via vectorbt (engine host only; wraps the validated
     /workspace/lightray/vbt_reversal.py). For the fixed campaign-1 config, unused."""
