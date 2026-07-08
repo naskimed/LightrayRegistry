@@ -27,7 +27,7 @@ ACTOR = "loop:population"
 
 POPULATION_COLUMNS = [
     "trade_id", "side", "entry_ts", "exit_ts", "entry_price", "exit_price", "volume",
-    "profit", "exit_reason", "f_hour", "f_ema", "f_mom", "f_dv", "f_iv", "f_hurst",
+    "profit", "profit_usd", "exit_reason", "f_hour", "f_ema", "f_mom", "f_dv", "f_iv", "f_hurst",
     "incumbent_cluster_id", "legacy_row_index", "mt5_deal_in", "mt5_deal_out",
 ]
 POPULATION_DTYPES = {
@@ -35,7 +35,9 @@ POPULATION_DTYPES = {
     # human-readable, parquet-stored) — the digest hashes the string bytes, not a µs int.
     "trade_id": "string", "side": "string", "entry_ts": "string",
     "exit_ts": "string", "entry_price": "float64", "exit_price": "float64",
-    "volume": "float64", "profit": "float64", "exit_reason": "string",
+    # profit = RISK-NORMALIZED R-multiple (regime-invariant; the SGL separation quantity, matching
+    # the EA's constant-dollar-risk profile). profit_usd = raw fixed-qty dollar PnL (traceability).
+    "volume": "float64", "profit": "float64", "profit_usd": "float64", "exit_reason": "string",
     "f_hour": "float64", "f_ema": "float64", "f_mom": "float64", "f_dv": "float64",
     "f_iv": "float64", "f_hurst": "float64", "incumbent_cluster_id": "int64",
     "legacy_row_index": "int64", "mt5_deal_in": "int64", "mt5_deal_out": "int64",

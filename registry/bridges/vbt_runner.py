@@ -115,6 +115,7 @@ def _build(spec: WhiteboxSpec):
 
 # ---- the whitebox population (ONE config) — via the validated Simulator ----------------------
 def run_population(spec: WhiteboxSpec) -> dict:
+    import numpy as np
     import pandas as pd
     lm, ctx, strat, features, fine = _build(spec)
     fine_model = None
@@ -130,6 +131,18 @@ def run_population(spec: WhiteboxSpec) -> dict:
 
     # map SimResult → registry population rows. Signals carry the feature vector; trades carry
     # entry/exit/pnl. One position at a time ⇒ the k-th buy trade matches the k-th buy signal.
+    #
+    # `profit` is the RISK-NORMALIZED R-multiple, NOT raw dollar PnL. The EA sizes to constant
+    # dollar risk, so its profit is regime-invariant (~constant $/trade across all BTC price
+    # levels); the Simulator uses fixed qty=1 so raw pnl scales ~linearly with price (≈40× from
+    # 2019→2025), which swamps the feature-conditional edge the SGL separates on. R = price-move ÷
+    # stop-distance = (exit−entry)·side ÷ (sl_atr_mult · atr_fast[entry_bar]) — dimensionless
+    # (≈ −1 on a stop, +2 on a TP), regime-invariant, proportional to the EA's constant-$ profit.
+    ts = ctx.ts
+    atr = np.asarray(ctx.atr_fast, dtype=float)
+    sl_mult = float(spec.sl_atr_mult)
+    _fin = np.isfinite(atr) & (atr > 0)
+    med_atr = float(np.nanmedian(atr[_fin])) if _fin.any() else 1.0     # warmup fallback (rare)
     rows: list[dict] = []
     bi = si = 0
     for tr in res.trades:
@@ -137,13 +150,20 @@ def run_population(spec: WhiteboxSpec) -> dict:
         if tr.side == 1: bi += 1
         else: si += 1
         feats = dict(zip(features.names, sig.features))
+        if tr.exit_price is None:
+            r_mult = 0.0
+        else:
+            eb = int(ts.searchsorted(tr.entry_time))
+            a = atr[eb] if 0 <= eb < atr.size and np.isfinite(atr[eb]) and atr[eb] > 0 else med_atr
+            risk = sl_mult * a
+            r_mult = ((float(tr.exit_price) - float(tr.entry_price)) * tr.side / risk) if risk > 0 else 0.0
         rows.append({
             "trade_id": f"t{len(rows):06d}", "side": "buy" if tr.side == 1 else "sell",
             "entry_ts": str(tr.entry_time),
             "exit_ts": str(tr.exit_time) if tr.exit_time is not None else str(tr.entry_time),
             "entry_price": float(tr.entry_price),
             "exit_price": float(tr.exit_price) if tr.exit_price is not None else float(tr.entry_price),
-            "volume": float(tr.qty), "profit": float(tr.pnl),
+            "volume": float(tr.qty), "profit": float(r_mult), "profit_usd": float(tr.pnl),
             "exit_reason": "closed" if tr.exit_price is not None else "open",
             "f_hour": feats.get("hour", 0.0), "f_ema": feats.get("ema", 0.0),
             "f_mom": feats.get("mom", 0.0), "f_dv": feats.get("dv", 0.0),
