@@ -73,6 +73,9 @@ class WhiteboxSpec:
     exit_resolution: str = "hybrid"
     start: str | None = None            # optional entry-window bounds (warmup uses full history)
     end: str | None = None
+    trading_days: tuple | None = None   # server-time weekdays allowed to ENTER (Mon=0..Sun=6);
+                                        # e.g. (5,) = server-Saturday only (the incumbent mask).
+                                        # None = block_monday default (legacy reversal).
 
 
 # ---- data: registry parquet OR MT3 CSV → (signal_5m, fine_1m) with capitalized OHLC ----------
@@ -119,6 +122,7 @@ def run_population(spec: WhiteboxSpec) -> dict:
         from lightminer.execution.fineexit import FineExitModel   # noqa: PLC0415
         fine_model = FineExitModel(fine)
     filt = lm["EntryFilters"](block_monday=True,
+                              trading_days=tuple(spec.trading_days) if spec.trading_days else None,
                               start=pd.Timestamp(spec.start) if spec.start else None,
                               end=pd.Timestamp(spec.end) if spec.end else None)
     res = lm["Simulator"](strat, features, filt, fine=fine_model,

@@ -17,6 +17,31 @@ function registry_sgl_search(job_json)
     [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
     [X, ~] = preprocess_fit(features_raw);
     N = size(X, 1);
+
+    % ── window mask: reproduce the manual tierB masked-train (train = complement of the
+    %    W1..W4 windows + embargo purge), via YOUR tierB_mask.m unchanged. Search runs on
+    %    masked-train ONLY; the windows are held out for the OOS readout. ─────────────────
+    win_counts = [];
+    if isfield(job, 'windows')
+        PC.windows = [cellstr(string(job.windows.names(:))), ...
+                      cellstr(string(job.windows.starts(:))), ...
+                      cellstr(string(job.windows.ends(:)))];
+        PC.embargo_left_d  = job.embargo.left_d;
+        PC.embargo_right_d = job.embargo.right_d;
+        if isfield(job, 'exclusions') && ~isempty(job.exclusions.starts)
+            PC.window_exclusions = [cellstr(string(job.exclusions.starts(:))), ...
+                                    cellstr(string(job.exclusions.ends(:)))];
+        else
+            PC.window_exclusions = cell(0, 2);
+        end
+        PC.min_window_side = job.min_window_side;
+        M = tierB_mask(dates, PC);            % BLOCKS if any window < min_window_side
+        win_counts = M.counts(:)';
+        fprintf('  masked-train: %d of %d trades held out to windows %s (counts %s)\n', ...
+            sum(M.is_train), N, mat2str(1:size(PC.windows,1)), mat2str(win_counts));
+        X = X(M.is_train, :); profits = profits(M.is_train); dates = dates(M.is_train);
+        N = size(X, 1);
+    end
     gate.pf_threshold = 1.0; gate.min_trades_per_cluster = 1;
     gate.min_pf_consistency = 0.0; gate.min_qualifying_trades_total = 1;
     nu = job.null;
@@ -57,7 +82,8 @@ function registry_sgl_search(job_json)
     [~, ord] = sort([per_K.sep_score], 'descend');
     per_K = per_K(ord);
     out = struct();
-    out.job_hash_echo = job.job_hash; out.side = job.side; out.n_trades = N;
+    out.job_hash_echo = job.job_hash; out.side = job.side; out.n_train = N;
+    out.window_counts = win_counts;
     out.per_K = per_K; out.best = per_K(1);
     out.engine_stamp = struct('name','matlab_sgl','version',version,'git','server');
     out.elapsed_s = toc(t_all);

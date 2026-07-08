@@ -10,6 +10,7 @@ function [features_raw, profits, dates] = read_population(parquet_path, side)
     Ts = T(m, :);
     features_raw = double([Ts.f_hour, Ts.f_ema, Ts.f_mom, Ts.f_dv, Ts.f_iv, Ts.f_hurst]);
     profits = double(Ts.profit);
-    dates   = cellstr(string(Ts.entry_ts));
+    % tierB_mask expects 'yyyy.mm.dd HH:MM:SS'; engines emit ISO 'yyyy-mm-dd HH:MM:SS'
+    dates   = cellstr(strrep(string(Ts.entry_ts), '-', '.'));
     fprintf('read_population: %s side, %d trades\n', side, numel(profits));
 end
