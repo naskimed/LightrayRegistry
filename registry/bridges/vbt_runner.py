@@ -69,7 +69,10 @@ class WhiteboxSpec:
     phantom_first_bar: bool = True
     strategy: str = "reversal_pch"
     sl_atr_mult: float = 0.08
-    tp_atr_mult: float = 0.16
+    tp_atr_mult: float = 0.08         # 1:1 reward:risk — CONFIRMED vs the EA's own ReportTester
+                                      # (16,734 tp / 14,912 sl exits; tp_dist≈sl_dist≈0.38% of price,
+                                      # win rate 58%). The prior 0.16 (2:1) was a reverse-engineering
+                                      # error that halved the win rate to 38% and broke reproduction.
     exit_resolution: str = "hybrid"
     start: str | None = None            # optional entry-window bounds (warmup uses full history)
     end: str | None = None
