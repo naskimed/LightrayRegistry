@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightray-registry"
+version = "0.1.0"
+description = "LightrayRegistry — event-sourced, hash-chained data-contract registry for the R&D pipeline (one frozen matrix, two engines)"
+requires-python = ">=3.10"
+# CORE DEPENDENCY POLICY (TECH_SPEC §0): the core is stdlib + Pydantic v2 ONLY.
+# pyarrow/pandas are BRIDGE-scope extras — registry/ core never imports them.
+dependencies = [
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+bridges = [
+    "pyarrow>=14",
+    "pandas>=2.0",
+]
+
+[project.scripts]
+reg = "registry.cli:main"
+reg-daemon = "registry.daemon.main:main"
+
+[tool.setuptools.packages.find]
+include = ["registry*"]

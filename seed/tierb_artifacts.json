@@ -1,0 +1,28 @@
+{
+  "_provenance": "docs/TIERB_ARTIFACT_INVENTORY.md TA-1.1 (2026-07-07/08) — the certified shot's evidence set, hashed on the Mac copy of the transferred Windows output/ (source tree: C:\\Users\\Alexander\\Documents\\Atesting7\\BelkaSGL). recover_artifacts.py re-hashes the LOCAL copies and asserts equality with these before registering.",
+  "base_hint_mac": "/Users/mohamednaski/Atesting2/BelkaSGL",
+  "base_hint_server": "/home/alex/Documents/Atesting7/BelkaSGL",
+  "git_stamps": {"flag_and_readout": "c93b8c7", "gate_completion": "aa03306"},
+  "artifacts": [
+    {"rel": "output/TIERB_OPENED.flag", "role": "log", "sha256": "db4bfa88c7f5bff58eb1aa53bca41bf8b56b3a7708a738c1fbc4dd349bd9fc5b", "note": "the one-shot spend marker: opened 05-Jul-2026 02:16:28 under git c93b8c7"},
+    {"rel": "output/tierB_readout_ANOTHERSTRATEGY.mat", "role": "readout_result", "sha256": "7df7d827933caf428c350827b82bc0ddab5bd571704401ba22a4015389746ac5"},
+    {"rel": "output/tierB_readout_ANOTHERSTRATEGY_20260705_021605.log", "role": "log", "sha256": "5746d4155319118222ac034bc4516fd5b253a7b968a86f45a9eb938654a87acd"},
+    {"rel": "output/tierB_postmortem_ANOTHERSTRATEGY_20260705_024158.log", "role": "postmortem", "sha256": "f7dd11734013eadb26c6ccf8bbb17620d81e1bebd8ab34147e63978fab7e77d9"},
+    {"rel": "output/tierB_gatecomp_ANOTHERSTRATEGY_20260705_031600.log", "role": "gate_completion", "sha256": "5418b537a446de1fb59d9c11d0fe9e4aaaae0ce752c1aa463d45cfca9f4b482b", "note": "LEDGER entry 20 evidence; run under git aa03306"},
+    {"rel": "output/tierB_search_soft_buy.mat", "role": "engine_cache", "sha256": "fbc0067ea86ab193396b011fe63bfaf0a15b6d6a843615dba814cb4508f7e0db"},
+    {"rel": "output/tierB_search_soft_sell.mat", "role": "engine_cache", "sha256": "f1835625c89756db55d319bb9959d329b89fb6db9f6a7b333de1d9fab42f3cc9", "note": "the certified incumbent S1_soft's search board"},
+    {"rel": "output/tierB_search_hard_buy.mat", "role": "engine_cache", "sha256": "4ab62fa5df5db77632366e411305cb48d699bb5888b502cf90a30d2c8fa25cf3"},
+    {"rel": "output/tierB_search_hard_sell.mat", "role": "engine_cache", "sha256": "d0a2a031adad8875f847322b477087dd24593225d259b45e90527ec723e774f5"},
+    {"rel": "output/tierB_search_ANOTHERSTRATEGY_20260705_014703.log", "role": "log", "sha256": "4b1eaa9c3635743b12179d0ce2b2eb18ed2cd249e64d22ef8590a8b3d2aadf74"},
+    {"rel": "output/census_ANOTHERSTRATEGY.mat", "role": "engine_cache", "sha256": "b847221143ee6cb554adf3b481b1fe2299fc29617684d09e73c2b012cbfeec49"},
+    {"rel": "output/rescore_ANOTHERSTRATEGY_all.mat", "role": "engine_cache", "sha256": "b27d9ba87bd1fcd42dc42de71cd545acbbc69a33991647f2f73104ceffb790fd"},
+    {"rel": "output/morning_ANOTHERSTRATEGY_20260705_010955.log", "role": "log", "sha256": "5ac835bc46fc1f067b4da263f295158cef419a93abf1b19a4a2609e7d4866d1a"},
+    {"rel": "LEDGER.md", "role": "log", "sha256": "e242d175afad897a5bc92ee1338ed8067032472ef2d278001e09ab25bbfd35a8", "note": "the RECONCILED 20-entry copy (19-entry Windows copy = stale; entry 20 machine-log-backed)"},
+    {"rel": "METRICS.md", "role": "log", "sha256": "9f3d2913195de498900b1ece01399be624156de7ec6de57e8fa9d1d959b1075c"},
+    {"rel": "precommit.m", "role": "config_pair", "sha256": "c997651bf584017cb6af32f5cfb03101c013052edf4c5933249b30296ae446d8", "note": "v0.6.2 frozen constants — parsed into pc_v0.7.0 at M3"}
+  ],
+  "attest_missing": [
+    {"name": "SPEC_v7", "expected_role": "log", "why": "not found on Mac or server trees; required for M7 entry conditions; fetch from Windows"},
+    {"name": "OPEN_register", "expected_role": "log", "why": "OPEN-9/15/16/20 definitions; fetch from Windows"}
+  ]
+}

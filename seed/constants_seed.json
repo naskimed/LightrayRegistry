@@ -1,0 +1,78 @@
+{
+  "_provenance": "Single sources: look budget = REG-INV-24 line (PLAN_v9_HISTORICAL §D, OQ-1 resolved; soft reserve user 2026-07-07). Placebo = docs/PLACEBO_RECIPE.md PB-1.2 (RATIFIED: exceed-extended-max n_ext=999; gate_ref stays n=200). Emission cap = PLAN §9 (1 batch/lineage/month provisional). Shadow = PLAN §9 amended criterion. cycle_schedule = SQ-9 [UNKNOWN, registers at M8S]. All register provisional at M3 (REG-INV-10).",
+  "look_budget_ws_sgl_w1w4": {
+    "series": "look_budget", "doc_id": "lb_ws_sgl_w1w4_gen1", "version": 1,
+    "entries": [
+      {"key": "lineage_id", "value": "lin::ws_sgl_w1w4", "finality": "provisional"},
+      {"key": "generation", "value": 1, "finality": "provisional"},
+      {"key": "initial_budget", "value": 10, "finality": "provisional"},
+      {"key": "alarm_remaining", "value": 5, "finality": "provisional"},
+      {"key": "diagnostic_remaining", "value": 1, "finality": "provisional"},
+      {"key": "reserve_form", "value": "soft", "finality": "provisional",
+       "rationale": "user decision 2026-07-07 — contract-only; the barrier does not enforce the last slot"}
+    ]
+  },
+  "placebo_recipe": {
+    "series": "placebo_recipe", "doc_id": "placebo_v1", "version": 1,
+    "entries": [
+      {"key": "construction", "value": "search_twin", "finality": "provisional"},
+      {"key": "destruction_mechanism", "value": "circular_shift", "finality": "provisional",
+       "rationale": "the exchangeability pin — a different destruction re-derives all rates (registered decision, not an edit)"},
+      {"key": "l1_comparator", "value": "strict_gt_gate_ref", "finality": "provisional"},
+      {"key": "l2_statistical", "value": "exceed_extended_max", "finality": "provisional"},
+      {"key": "n_ext", "value": 999, "finality": "provisional",
+       "rationale": "PB-1.1 RATIFIED — exact rate 1/(n_ext+1)=1/1000 per batch; readout-batch scale ONLY"},
+      {"key": "l2_input_scope", "value": "readout_batch_only", "finality": "provisional",
+       "rationale": "PB-1.2 — search-stage twins (n=200) are scorecard telemetry, NEVER alarm inputs"},
+      {"key": "seed_scheme", "value": "shuffle_seed_base + index (shifts 201..999); n=200 null + gate_ref UNTOUCHED", "finality": "provisional"},
+      {"key": "sequential_l1_count", "value": 3, "finality": "provisional"},
+      {"key": "sequential_window_batches", "value": 12, "finality": "provisional"},
+      {"key": "rolling_by", "value": "k", "finality": "provisional"},
+      {"key": "cross_generations", "value": true, "finality": "provisional"},
+      {"key": "voids_contribute", "value": false, "finality": "provisional"}
+    ]
+  },
+  "autonomy_constants": {
+    "series": "autonomy_constants", "doc_id": "autonomy_v1", "version": 1,
+    "entries": [
+      {"key": "emission_cap_per_lineage_per_month", "value": 1, "finality": "provisional"},
+      {"key": "readout_velocity", "unknown": true, "finality": "provisional",
+       "rationale": "rate cap; value chosen at M8 with the tempo decision"},
+      {"key": "scope_mint_velocity", "unknown": true, "finality": "provisional"},
+      {"key": "daily_trial_budget", "unknown": true, "finality": "provisional"},
+      {"key": "api_token_budget", "unknown": true, "finality": "provisional"},
+      {"key": "autonomy_level", "value": "supervised", "finality": "provisional",
+       "rationale": "flips at M11 via constants.amend, not a code change"}
+    ]
+  },
+  "cycle_schedule": {
+    "series": "cycle_schedule", "doc_id": "cycle_schedule_v1", "version": 1,
+    "entries": [
+      {"key": "mode", "value": "event_driven_on_engine_free", "finality": "provisional"},
+      {"key": "fixed_cadence_hours", "unknown": true, "finality": "provisional",
+       "rationale": "SQ-9 [value UNKNOWN] — registers at M8S; cadences are chosen numbers"}
+    ]
+  },
+  "cost_model": {
+    "series": "cost_model", "doc_id": "cost_model_v0_flat", "version": 1,
+    "entries": [
+      {"key": "version", "value": "cost_model_v0_flat", "finality": "provisional"},
+      {"key": "kind", "value": "flat_fee_from_pinned_fill_model", "finality": "provisional",
+       "rationale": "signed Q5 — legal Stage-1 cost model until Stage 4 teaches a calibrated one"}
+    ]
+  },
+  "score_function": {
+    "series": "score_function", "doc_id": "score_fn_v1", "version": 1,
+    "entries": [
+      {"key": "version", "value": "score_v1", "finality": "provisional",
+       "rationale": "APPARATUS (v10.1) — human-only amend; implemented in cascade.SCORE_FUNCTIONS"}
+    ]
+  },
+  "emission_spec": {
+    "series": "emission_spec", "doc_id": "silent_v1", "version": 1,
+    "entries": [
+      {"key": "definition", "value": "captured diary/stdout byte-empty OR matching the whitelisted emission list", "finality": "provisional",
+       "rationale": "the registered meaning of 'emits nothing' — no 2am hand-waving"}
+    ]
+  }
+}

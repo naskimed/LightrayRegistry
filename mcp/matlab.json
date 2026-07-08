@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "matlab": {
+      "command": "python3",
+      "args": ["mcp/matlab_mcp.py"],
+      "env": {
+        "MATLAB_BIN": "matlab",
+        "BELKASGL_TREE": "/home/alex/Documents/Atesting7/BelkaSGL"
+      }
+    }
+  }
+}

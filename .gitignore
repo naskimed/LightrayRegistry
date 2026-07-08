@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+var/
+*.parquet
+pc_v062.json

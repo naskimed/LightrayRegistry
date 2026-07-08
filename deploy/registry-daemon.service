@@ -1,0 +1,20 @@
+# systemd unit — the ONLY long-lived process (install: ~/.config/systemd/user/ + systemctl --user)
+# The daemon owns the logbook and the clock; Claude Code sessions and engines are its children.
+[Unit]
+Description=LightrayRegistry daemon (single-writer event log + scheduler)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/LightrayRegistry
+Environment=LIGHTRAY_REGISTRY_WORKDIR=%h/registry-var
+# headless Claude Code auth (--bare skips OAuth/keychain):
+Environment=ANTHROPIC_API_KEY=CHANGE_ME
+# PATH must reach: python venv, matlab (~/.local/bin), claude
+Environment=PATH=%h/.local/bin:%h/LightrayRegistry/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/LightrayRegistry/.venv/bin/reg-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
