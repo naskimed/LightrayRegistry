@@ -32,6 +32,24 @@ from .tools.build_sgl_jobs import build_readout_job, build_search_job, load_pc
 
 MATLAB_CLIENT = "/home/alex/lightray/LightrayRegistry/matlab/registry_client"
 BELKASGL = "/home/alex/Documents/Atesting7/BelkaSGL"
+CANONICAL = "/home/alex/lightray/snapshots/binance_btcusdt_1m/canonical.parquet"
+
+
+def generate_population(spec_dict: dict, pop_dir: Path) -> tuple[str, str, int, int]:
+    """Materialize a whitebox population from a proposed config (the population loop). Every
+    field is a WhiteboxSpec knob the agent may vary: strategy family, exit RR (sl/tp), structural
+    params (donchian/atr/ema), trading_days, sizing. profit = R-multiple (regime-invariant). The
+    population is content-addressed by its config so identical configs dedup."""
+    import hashlib
+    from .bridges.vbt_runner import WhiteboxSpec, run_population, _write_parquet
+    pop_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(json.dumps(spec_dict, sort_keys=True).encode()).hexdigest()[:12]
+    path = pop_dir / f"pop_{key}.parquet"
+    spec = WhiteboxSpec(data_path=CANONICAL, exit_resolution="hybrid",
+                        trading_days=tuple(spec_dict.pop("trading_days", (5,))), **spec_dict)
+    rp = run_population(spec)
+    _write_parquet(rp["rows"], path)
+    return str(path), _sha(str(path)), len(rp["res"].sell), len(rp["res"].buy)
 
 
 class Ledger:
@@ -117,27 +135,35 @@ def run_matlab(fn: str, job_path: str) -> None:
 
 
 def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledger,
-          budget: LookBudget, trials: int, runs_per_k: int, seed_points: int) -> dict:
+          budget: LookBudget, trials: int, runs_per_k: int, seed_points: int,
+          spec: dict | None = None, tag: str = "") -> dict:
     halt = workdir.parent / "var" / "HALT"
     if halt.exists():
         ledger.append("cycle.halted", {"contract": contract, "reason": "var/HALT present"})
         return {"halted": True}
+    tag = tag or side
 
-    ledger.append("cycle.open", {"contract": contract, "side": side, "population": population,
-                                 "population_sha256": _sha(population),
+    ledger.append("cycle.open", {"contract": contract, "side": side, "spec": spec or {"fixed": True},
+                                 "population": population, "population_sha256": _sha(population),
                                  "budget_remaining": budget.state["remaining"]})
 
     # ── STAGE: masked SEARCH + gate ────────────────────────────────────────────────────────
-    sjob = workdir / f"{contract}_{side}_search_job.json"
-    sres = workdir / f"{contract}_{side}_search.json"
-    job = build_search_job(population, side, "z", str(sres), str(workdir / f"{contract}_{side}_prog.jsonl"),
-                           trials, seed_points, runs_per_k, None, 42, BELKASGL, f"{contract}_{side}_search")
+    sjob = workdir / f"{contract}_{tag}_search_job.json"
+    sres = workdir / f"{contract}_{tag}_search.json"
+    job = build_search_job(population, side, "z", str(sres), str(workdir / f"{contract}_{tag}_prog.jsonl"),
+                           trials, seed_points, runs_per_k, None, 42, BELKASGL, f"{contract}_{tag}_search")
     job["objective"] = "z"
     sjob.write_text(json.dumps(job, indent=1))
     ledger.append("stage.search.dispatch", {"job_sha256": _sha(str(sjob)), "objective": "z",
                                              "selector": "z", "declared_width": len(job["K_values"]) * runs_per_k * trials})
-    run_matlab("registry_sgl_search", str(sjob))
-    res = json.loads(sres.read_text())
+    try:
+        run_matlab("registry_sgl_search", str(sjob))
+        res = json.loads(sres.read_text())
+    except Exception as e:  # noqa: BLE001  — tierB_mask BLOCKS if a window has < min_window_side trades
+        ledger.append("cycle.population_invalid", {"reason": "search failed (likely a window below "
+                      "min_window_side — population too sparse for the certifier windows)",
+                      "detail": str(e)[-200:]})
+        return {"verdict": "population_invalid"}
     sel = res["selected"]
     ledger.append("stage.search.result", {
         "selected_K": sel["K"], "selected_z": sel["z"], "kernel": sel["params"]["kernel"],
@@ -164,11 +190,11 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
     # ── STAGE: OOS READOUT (spends one look) ───────────────────────────────────────────────
     cfg = {k: sel["params"][k] for k in ("K", "kernel", "sigma", "k_nbrs", "gamma", "n_diff",
                                          "w_hour", "w_ema", "w_mom", "w_dv", "w_iv", "w_hurst")}
-    rjob = workdir / f"{contract}_{side}_readout_job.json"
-    rres = workdir / f"{contract}_{side}_readout.json"
-    rj = build_readout_job(cfg, f"{contract}_{side}", str(rres), side, population, None, None, BELKASGL)
+    rjob = workdir / f"{contract}_{tag}_readout_job.json"
+    rres = workdir / f"{contract}_{tag}_readout.json"
+    rj = build_readout_job(cfg, f"{contract}_{tag}", str(rres), side, population, None, None, BELKASGL)
     rjob.write_text(json.dumps(rj, indent=1))
-    readout_id = f"{contract}_{side}_look_{budget.state['consumed'] + 1}"
+    readout_id = f"{contract}_{tag}_look_{budget.state['consumed'] + 1}"
     budget.spend(readout_id, _sha(str(rjob)))          # can_spend already true; decrement BEFORE unmask
     ledger.append("readout.spend", {"readout_id": readout_id, "budget_remaining": budget.state["remaining"],
                                     "alarm": budget.alarm})
