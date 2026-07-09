@@ -123,15 +123,36 @@ function registry_sgl_search(job_json)
     out.selector = job.selector; out.selected = per_K(isel);
     out.n_evals_total = numel(K_values) * runs_per_k * job.budget.n_trials;   % realized width
     out.objective = job.objective;
+    out.job_hash_echo = job.job_hash;
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
-        'min_window_side', job.min_window_side, 'fit', job.fit, 'null', nu, ...
-        'objective', job.objective, 'selector', job.selector, 'budget', job.budget);
-    out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, 'git', 'server');
+        'exclusions', getfield_default(job, 'exclusions', struct('starts',{{}},'ends',{{}})), ...
+        'min_window_side', job.min_window_side, 'fit', job.fit, 'search', s, 'null', nu, ...
+        'K_values', job.K_values(:)', 'objective', job.objective, 'selector', job.selector, ...
+        'budget', job.budget, 'rng_seed', job.rng_seed);
+    out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, ...
+        'belkasgl_git', belkasgl_git(job.belkasgl_path), 'rng_seed', job.rng_seed, ...
+        'pc_source_sha256', getfield_default(job, 'pc_source_sha256', 'unknown'));
     out.elapsed_s = toc(t_all);
     fid = fopen(job.result_path, 'w'); fprintf(fid, '%s', jsonencode(out)); fclose(fid);
     fprintf('SGL search %s: SELECTED (by %s) K=%d sep=%.2f z=%.3f | width %d evals | %.0fs\n', ...
         job.side, job.selector, out.selected.K, out.selected.sep_score, out.selected.z, ...
         out.n_evals_total, out.elapsed_s);
+end
+
+
+%% ── provenance helpers ────────────────────────────────────────────────────────────────
+function g = belkasgl_git(p)
+%BELKASGL_GIT  real short git hash of the engine tree at run time (was hard-coded 'server').
+    g = 'nogit';
+    try
+        [st, h] = system(sprintf('git -C "%s" rev-parse --short HEAD 2>/dev/null', p));
+        if st == 0 && ~isempty(strtrim(h)), g = strtrim(h); end
+    catch
+    end
+end
+
+function v = getfield_default(s, f, d)
+    if isfield(s, f), v = s.(f); else, v = d; end
 end
 
 

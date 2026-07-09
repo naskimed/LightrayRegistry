@@ -130,7 +130,13 @@ function registry_readout(job_json)
         'carrier_W4_pf', carrier_W4_pf, 'reseeds', reseeds);
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
         'min_window_side', job.min_window_side, 'fit', job.fit, 'select', sel_cfg, 'null', nu);
-    out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, 'git', 'server');
+    egit = 'nogit';
+    try
+        [st, h] = system(sprintf('git -C "%s" rev-parse --short HEAD 2>/dev/null', job.belkasgl_path));
+        if st == 0 && ~isempty(strtrim(h)), egit = strtrim(h); end
+    catch
+    end
+    out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, 'belkasgl_git', egit);
     fid = fopen(job.result_path, 'w'); fprintf(fid, '%s', jsonencode(out)); fclose(fid);
     fprintf('READOUT %s (%s): masked_z=%.2f | S0=%.2f pooled=%.2f uplift=%+.2f | reseeds %s | carrierJ %s\n', ...
         job.tag, side, Rz.z, s0, pooled, pooled - s0, mat2str([reseeds.pooled], 3), ...
