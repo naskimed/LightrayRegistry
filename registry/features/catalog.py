@@ -190,6 +190,28 @@ def compute_features(bars: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(f, index=bars.index)
 
 
+def attach_to_population(rows: list[dict], bars: pd.DataFrame) -> tuple[list[dict], list[str]]:
+    """Join the target-blind catalog onto population rows at each trade's entry bar. Adds
+    fc_<name> columns (fc = feature-catalog); the join is a pure lookup at entry_ts, so it
+    inherits the catalog's target-blindness. `bars` must be the SAME signal bars the population
+    was generated on (naive-UTC index matching entry_ts)."""
+    F = compute_features(bars)
+    cols = list(F.columns)
+    idx = F.index
+    # map entry_ts (ISO string) -> catalog row via exact index lookup
+    Fd = {ts.isoformat(sep=" "): F.loc[ts].to_dict() for ts in idx}
+    out = []
+    for r in rows:
+        row = dict(r)
+        key = str(r["entry_ts"])
+        fr = Fd.get(key) or Fd.get(key[:19])   # tolerate second-precision
+        for c in cols:
+            v = fr.get(c) if fr else None
+            row[f"fc_{c}"] = float(v) if v is not None and v == v else float("nan")
+        out.append(row)
+    return out, [f"fc_{c}" for c in cols]
+
+
 FAMILIES = {
     "returns_stationarity": ["ret_1", "ret_5", "ret_20", "ret_50", "fracdiff_d04", "fracdiff_d06"],
     "volatility": ["rv_20", "rv_50", "parkinson_20", "parkinson_50", "yangzhang_20", "yangzhang_50",
