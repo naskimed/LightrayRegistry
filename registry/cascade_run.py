@@ -45,8 +45,9 @@ def generate_population(spec_dict: dict, pop_dir: Path) -> tuple[str, str, int, 
     pop_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps(spec_dict, sort_keys=True).encode()).hexdigest()[:12]
     path = pop_dir / f"pop_{key}.parquet"
+    td = spec_dict.pop("trading_days", (5,))            # None (menu 'all') => WhiteboxSpec default
     spec = WhiteboxSpec(data_path=CANONICAL, exit_resolution="hybrid",
-                        trading_days=tuple(spec_dict.pop("trading_days", (5,))), **spec_dict)
+                        trading_days=tuple(td) if td else None, **spec_dict)
     rp = run_population(spec)
     _write_parquet(rp["rows"], path)
     return str(path), _sha(str(path)), len(rp["res"].sell), len(rp["res"].buy)
