@@ -41,7 +41,8 @@ def build_search_job(population: str | None, side: str, selector: str, result_pa
                      seed_points: int | None = None, runs_per_k: int | None = None,
                      k_values: list[int] | None = None, rng_seed: int = 42,
                      belkasgl_path: str = BELKASGL_DEFAULT, job_hash: str = "",
-                     legacy_txt: str | None = None, legacy_csv: str | None = None) -> dict:
+                     legacy_txt: str | None = None, legacy_csv: str | None = None,
+                     objective: str = "z") -> dict:
     pc = load_pc()
     if not population and not (legacy_txt and legacy_csv):
         raise SystemExit("search needs --population OR --legacy-txt + --legacy-csv")
@@ -61,7 +62,11 @@ def build_search_job(population: str | None, side: str, selector: str, result_pa
             "runs_per_k": runs_per_k if runs_per_k is not None else pc["budget"]["runs_per_k"],
         },
         "null": pc["null"],
-        "selector": selector,                 # PINNED here — the engine applies it, nobody re-ranks
+        # BOTH pinned here — the engine applies them, nobody re-ranks or re-aims:
+        # objective = what bayesopt climbs ('z' = manual tierB tb_z_soft; 'sep' = main_sgl_is);
+        # selector  = which per-K winner is THE result.
+        "objective": objective,
+        "selector": selector,
         "rng_seed": rng_seed,
         "result_path": result_path,
         "pc_source_sha256": pc["_provenance"]["source_sha256"],
@@ -113,6 +118,7 @@ def main() -> None:
     s.add_argument("--legacy-csv")
     s.add_argument("--side", default="sell")
     s.add_argument("--selector", required=True, choices=["z", "sep"])
+    s.add_argument("--objective", required=True, choices=["z", "sep"])
     s.add_argument("--out", required=True)
     s.add_argument("--result", required=True)
     s.add_argument("--progress")
@@ -140,7 +146,7 @@ def main() -> None:
         kv = [int(x) for x in a.k_values.split(",")] if a.k_values else None
         job = build_search_job(a.population, a.side, a.selector, a.result, a.progress,
                                a.trials, a.seed_points, a.runs_per_k, kv, a.rng_seed,
-                               a.belkasgl, a.job_hash, a.legacy_txt, a.legacy_csv)
+                               a.belkasgl, a.job_hash, a.legacy_txt, a.legacy_csv, a.objective)
     else:
         job = build_readout_job(json.loads(Path(a.config).read_text()), a.tag, a.result,
                                 a.side, a.population, a.legacy_txt, a.legacy_csv, a.belkasgl)

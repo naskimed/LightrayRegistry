@@ -30,6 +30,11 @@ function registry_sgl_search(job_json)
     assert(isfield(job, 'windows'), 'windows block REQUIRED — unmasked search is not a job kind');
     assert(isfield(job, 'selector') && any(strcmp(job.selector, {'z','sep'})), ...
         'job.selector (''z''|''sep'') REQUIRED — the selector is pinned in the contract');
+    assert(isfield(job, 'objective') && any(strcmp(job.objective, {'z','sep'})), ...
+        ['job.objective (''z''|''sep'') REQUIRED — pinned in the contract. ''z'' = the manual ' ...
+         'tierB objective (tb_z_soft: fit -> sep_z -> R.z, CRN shifts shared across evals); ' ...
+         '''sep'' = the IS separation score (main_sgl_is). The objective changes WHICH peak ' ...
+         'the search finds — it is part of the frozen design, never a runtime choice.']);
 
     if isfield(job, 'population_parquet')
         [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
@@ -77,21 +82,22 @@ function registry_sgl_search(job_json)
                    'params', {}, 'blob_pf', {}, 'blob_z', {}, 'seed', {});
     t_all = tic;
     for K = K_values
-        sep_best = -inf; pbest = [];
+        obj_best = -inf; pbest = [];
         for r = 1:runs_per_k          % optimizer restarts over the SAME deterministic function
             rng(job.rng_seed + 1000*K + r);              % acquisition randomness only
-            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K);
+            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K, shifts, job.objective);
             bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
                 'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
                 'AcquisitionFunctionName', 'expected-improvement-plus', ...
                 'UseParallel', false, 'Verbose', 0, 'PlotFcn', []);
             % XAtMinObjective = the OBSERVED minimizer (bestPoint may return a model-based
             % point whose true value was never evaluated — the identity assert needs observed)
-            if -bo.MinObjective > sep_best, sep_best = -bo.MinObjective; pbest = bo.XAtMinObjective; end
+            if -bo.MinObjective > obj_best, obj_best = -bo.MinObjective; pbest = bo.XAtMinObjective; end
         end
         ev = eval_winner(pbest, Xtr, profits, C, nu, K, shifts);
-        assert(abs(ev.sep - sep_best) < 1e-6 || ev.degenerate, ...
-            'estimator identity violated: refit sep %.6f != searched %.6f', ev.sep, sep_best);
+        if strcmp(job.objective, 'z'), refit = ev.z; else, refit = ev.sep; end
+        assert(abs(refit - obj_best) < 1e-6 || ev.degenerate, ...
+            'estimator identity violated: refit %s %.6f != searched %.6f', job.objective, refit, obj_best);
         per_K(end+1) = struct('K', K, 'sep_score', ev.sep, 'z', ev.z, 'n_blobs', ev.n_blobs, ...
             'degenerate', ev.degenerate, 'params', ev.params, 'blob_pf', ev.blob_pf, ...
             'blob_z', ev.blob_z, 'seed', ev.seed);
@@ -116,9 +122,10 @@ function registry_sgl_search(job_json)
     out.per_K = per_K;                                   % K order — a report, not a ranking
     out.selector = job.selector; out.selected = per_K(isel);
     out.n_evals_total = numel(K_values) * runs_per_k * job.budget.n_trials;   % realized width
+    out.objective = job.objective;
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
         'min_window_side', job.min_window_side, 'fit', job.fit, 'null', nu, ...
-        'selector', job.selector, 'budget', job.budget);
+        'objective', job.objective, 'selector', job.selector, 'budget', job.budget);
     out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, 'git', 'server');
     out.elapsed_s = toc(t_all);
     fid = fopen(job.result_path, 'w'); fprintf(fid, '%s', jsonencode(out)); fclose(fid);
@@ -129,12 +136,17 @@ end
 
 
 %% ── the deterministic objective + the identical final evaluation ──────────────────────
-function S = sgl_objective(p, X, profits, C, nu, K)
+function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective)
     try
         bid = fit_soft_cfg(p, K, X, C, sgl_param_seed(p, K));
-        S = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
+        if strcmp(objective, 'z')                        % the manual tierB objective (tb_z_soft):
+            R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
+            v = R.z;                                     % z vs the CRN null (one shift vector, all evals)
+        else                                             % the IS separation score (main_sgl_is)
+            v = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
+        end
     catch
-        S = 0;                                           % failed region — deterministic zero
+        v = 0;                                           % failed region — deterministic zero
     end
 end
 
