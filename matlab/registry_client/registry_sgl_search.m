@@ -62,6 +62,16 @@ function registry_sgl_search(job_json)
     rs_sh  = RandStream('mt19937ar', 'Seed', nu.shuffle_seed);
     shifts = randi(rs_sh, N - 1, nu.n_shuffles, 1);      % CRN: one shift vector, all configs
 
+    % ── the GATE: null-of-the-max accumulator (rescore_run.m, made streaming) ─────────────
+    % Every evaluated config contributes its OWN-standardized null vector; we keep the running
+    % elementwise MAX over configs (per shuffle). gate_ref = q95 of that max distribution =
+    % how high a z the BEST-of-the-whole-search reaches by chance. A config passes iff its z
+    % exceeds gate_ref. O(n_shuffles) memory, prices the FULL realized search width. Because
+    % the z-objective already computes each config's null via sep_z, this is ~free.
+    gate_acc = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    gate_acc('maxZn') = -inf(nu.n_shuffles, 1);
+    gate_acc('n') = 0;
+
     s = job.search;
     vars = [ optimizableVariable('kernel', {'rbf','matern','rational'}, 'Type','categorical')
              optimizableVariable('sigma',  s.sigma(:)')
@@ -85,7 +95,7 @@ function registry_sgl_search(job_json)
         obj_best = -inf; pbest = [];
         for r = 1:runs_per_k          % optimizer restarts over the SAME deterministic function
             rng(job.rng_seed + 1000*K + r);              % acquisition randomness only
-            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K, shifts, job.objective);
+            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K, shifts, job.objective, gate_acc);
             bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
                 'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
                 'AcquisitionFunctionName', 'expected-improvement-plus', ...
@@ -113,6 +123,12 @@ function registry_sgl_search(job_json)
         end
     end
 
+    % ── the GATE: q95 of the null-of-the-max at the realized width ─────────────────────
+    maxZn = gate_acc('maxZn');
+    maxZn = maxZn(isfinite(maxZn));
+    gate_ref = quantile(maxZn, 0.95);
+    gate_priced_configs = gate_acc('n');
+
     % ── selection under the PINNED selector (no post-hoc column-picking) ───────────────
     if strcmp(job.selector, 'z'), vals = [per_K.z]; else, vals = [per_K.sep_score]; end
     [~, isel] = max(vals);
@@ -121,6 +137,9 @@ function registry_sgl_search(job_json)
     out.window_counts = M.counts(:)';
     out.per_K = per_K;                                   % K order — a report, not a ranking
     out.selector = job.selector; out.selected = per_K(isel);
+    out.gate_ref = gate_ref;                             % q95 null-of-the-max at this width
+    out.gate_priced_configs = gate_priced_configs;       % configs that fed the null-of-max
+    out.selected_beats_gate = out.selected.z > gate_ref; % THE verdict (z-selector only)
     out.n_evals_total = numel(K_values) * runs_per_k * job.budget.n_trials;   % realized width
     out.objective = job.objective;
     out.job_hash_echo = job.job_hash;
@@ -134,10 +153,13 @@ function registry_sgl_search(job_json)
         'pc_source_sha256', getfield_default(job, 'pc_source_sha256', 'unknown'));
     out.elapsed_s = toc(t_all);
     fid = fopen(job.result_path, 'w'); fprintf(fid, '%s', jsonencode(out)); fclose(fid);
-    fprintf('SGL search %s: SELECTED (by %s) K=%d sep=%.2f z=%.3f | width %d evals | %.0fs\n', ...
-        job.side, job.selector, out.selected.K, out.selected.sep_score, out.selected.z, ...
+    fprintf('SGL search %s: SELECTED (by %s) K=%d z=%.3f | GATE_REF=%.3f (%d configs) -> %s | width %d | %.0fs\n', ...
+        job.side, job.selector, out.selected.K, out.selected.z, gate_ref, gate_priced_configs, ...
+        tern(out.selected_beats_gate, 'BEATS GATE', 'below gate — no candidate'), ...
         out.n_evals_total, out.elapsed_s);
 end
+
+function s = tern(c, a, b), if c, s = a; else, s = b; end, end
 
 
 %% ── provenance helpers ────────────────────────────────────────────────────────────────
@@ -157,15 +179,17 @@ end
 
 
 %% ── the deterministic objective + the identical final evaluation ──────────────────────
-function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective)
+function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective, gate_acc)
+    % ONE sep_z call yields everything: R.z (z-objective), R.S_real (sep-objective, == sep_blobs
+    % on the real labels), and R.null (the CRN null vector) for the gate accumulator.
     try
         bid = fit_soft_cfg(p, K, X, C, sgl_param_seed(p, K));
-        if strcmp(objective, 'z')                        % the manual tierB objective (tb_z_soft):
-            R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
-            v = R.z;                                     % z vs the CRN null (one shift vector, all evals)
-        else                                             % the IS separation score (main_sgl_is)
-            v = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
-        end
+        R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
+        if strcmp(objective, 'z'), v = R.z; else, v = R.S_real; end
+        nl = R.null(:); sd = std(nl); if sd < 1e-12, sd = 1e-12; end
+        Zn = (nl - mean(nl)) / sd;                       % this config's null, own-standardized
+        gate_acc('maxZn') = max(gate_acc('maxZn'), Zn);  % running max over configs (per shuffle)
+        gate_acc('n') = gate_acc('n') + 1;
     catch
         v = 0;                                           % failed region — deterministic zero
     end
