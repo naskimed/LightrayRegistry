@@ -80,10 +80,10 @@ def bb_pctb(c, n):
 
 
 def lr_slope(c, n):
-    x = np.arange(n)
-    xm = x.mean()
-    denom = ((x - xm) ** 2).sum()
-    return np.log(c).rolling(n).apply(lambda y: ((x - xm) * (y - y.mean())).sum() / denom, raw=True)
+    # vectorized rolling OLS slope of log(c) on a positional index: cov(idx,y)/var(idx)
+    y = np.log(c)
+    idx = pd.Series(np.arange(len(y), dtype=float), index=y.index)
+    return y.rolling(n).cov(idx) / ((n * n - 1) / 12.0)
 
 
 def adx(h, l, c, n):
@@ -100,14 +100,13 @@ def adx(h, l, c, n):
 
 # ── serial dependence / complexity ───────────────────────────────────────────────────────────
 def variance_ratio(ret, q, n):
-    """Lo-MacKinlay VR(q): var of q-period returns / (q * var of 1-period). VR<1 mean-revert."""
-    v1 = ret.rolling(n).var()
-    vq = ret.rolling(n).sum().rolling(q).mean()  # proxy q-agg
-    return (ret.rolling(q).sum().rolling(n).var()) / (q * v1)
+    """Lo-MacKinlay VR(q): var(q-period returns) / (q * var(1-period)). VR<1 => mean-reverting.
+    Vectorized: q-period return = rolling sum of q one-period returns."""
+    return ret.rolling(q).sum().rolling(n).var() / (q * ret.rolling(n).var())
 
 
 def rolling_autocorr(x, n, lag):
-    return x.rolling(n).apply(lambda s: pd.Series(s).autocorr(lag), raw=False)
+    return x.rolling(n).corr(x.shift(lag))   # vectorized rolling autocorrelation at `lag`
 
 
 # ── microstructural (the NEW family — Binance volume/taker) ───────────────────────────────────
@@ -160,7 +159,7 @@ def compute_features(bars: pd.DataFrame) -> pd.DataFrame:
     f["skew_50"] = lr.rolling(50).skew()
     f["kurt_50"] = lr.rolling(50).kurt()
     f["zscore_20"] = (c - c.rolling(20).mean()) / c.rolling(20).std()
-    f["tsrank_50"] = c.rolling(50).apply(lambda s: (s.iloc[-1] > s).mean(), raw=False)
+    f["tsrank_50"] = c.rolling(50).rank(pct=True)   # percentile of current close in trailing 50
     f["clv"] = (2 * c - h - l) / (h - l).replace(0, np.nan)
 
     # serial dependence / complexity
