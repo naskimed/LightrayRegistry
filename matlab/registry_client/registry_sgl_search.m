@@ -31,7 +31,16 @@ function registry_sgl_search(job_json)
     assert(isfield(job, 'selector') && any(strcmp(job.selector, {'z','sep'})), ...
         'job.selector (''z''|''sep'') REQUIRED — the selector is pinned in the contract');
 
-    [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
+    if isfield(job, 'population_parquet')
+        [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
+    else                                              % legacy EA pair (same branch as the readout)
+        [buy_data, sell_data] = read_belka_config(job.legacy_txt);
+        [buy_prof, sell_prof, buy_dates, sell_dates] = read_trades(job.legacy_csv);
+        if strcmp(job.side, 'buy'), sdat = buy_data; sprf = buy_prof; sdte = buy_dates;
+        else,                       sdat = sell_data; sprf = sell_prof; sdte = sell_dates; end
+        n_use = min(size(sdat, 1), length(sprf));
+        features_raw = sdat(1:n_use, 2:7); profits = sprf(1:n_use); dates = sdte(1:n_use);
+    end
 
     % ── mask FIRST, then train-only preprocessing (readout-identical order) ────────────
     M = tierB_mask(dates, mask_pc_from_job(job));        % BLOCKS if any window < min side

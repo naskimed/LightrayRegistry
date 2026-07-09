@@ -36,15 +36,20 @@ def _mask_block(pc: dict) -> dict:
     }
 
 
-def build_search_job(population: str, side: str, selector: str, result_path: str,
+def build_search_job(population: str | None, side: str, selector: str, result_path: str,
                      progress_path: str | None = None, trials: int | None = None,
                      seed_points: int | None = None, runs_per_k: int | None = None,
                      k_values: list[int] | None = None, rng_seed: int = 42,
-                     belkasgl_path: str = BELKASGL_DEFAULT, job_hash: str = "") -> dict:
+                     belkasgl_path: str = BELKASGL_DEFAULT, job_hash: str = "",
+                     legacy_txt: str | None = None, legacy_csv: str | None = None) -> dict:
     pc = load_pc()
+    if not population and not (legacy_txt and legacy_csv):
+        raise SystemExit("search needs --population OR --legacy-txt + --legacy-csv")
+    src = ({"population_parquet": population} if population
+           else {"legacy_txt": legacy_txt, "legacy_csv": legacy_csv})
     job = {
         "belkasgl_path": belkasgl_path,
-        "population_parquet": population,
+        **src,
         "side": side,
         "K_values": k_values or [2, 3, 4, 5, 6, 7, 8, 9],
         **_mask_block(pc),
@@ -103,7 +108,9 @@ def main() -> None:
     sub = ap.add_subparsers(dest="kind", required=True)
 
     s = sub.add_parser("search")
-    s.add_argument("--population", required=True)
+    s.add_argument("--population")
+    s.add_argument("--legacy-txt")
+    s.add_argument("--legacy-csv")
     s.add_argument("--side", default="sell")
     s.add_argument("--selector", required=True, choices=["z", "sep"])
     s.add_argument("--out", required=True)
@@ -133,7 +140,7 @@ def main() -> None:
         kv = [int(x) for x in a.k_values.split(",")] if a.k_values else None
         job = build_search_job(a.population, a.side, a.selector, a.result, a.progress,
                                a.trials, a.seed_points, a.runs_per_k, kv, a.rng_seed,
-                               a.belkasgl, a.job_hash)
+                               a.belkasgl, a.job_hash, a.legacy_txt, a.legacy_csv)
     else:
         job = build_readout_job(json.loads(Path(a.config).read_text()), a.tag, a.result,
                                 a.side, a.population, a.legacy_txt, a.legacy_csv, a.belkasgl)
