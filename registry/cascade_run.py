@@ -188,6 +188,37 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
         ledger.append("cycle.parked", {"reason": "budget exhausted", "selected_z": sel["z"]})
         return {"verdict": "parked_exhausted", "z": sel["z"]}
 
+    # ── ARMING (brake #3 — the human authorization chain, ratified 2026-07-10) ─────────────
+    # A readout fires ONLY under a live human arming (ARMING.json: {bundle_id, arms_remaining,
+    # armed_by:"human:..."}). No arming => the candidate PARKS, fully recorded, zero spend.
+    # Zero-click at fire time; one arming event per bundle. Replaces the bare gate&budget
+    # auto-fire (a silent supersession of the v10 conditional doctrine).
+    arming_path = workdir / "ARMING.json"
+    arming = json.loads(arming_path.read_text()) if arming_path.exists() else None
+    if not arming or arming.get("arms_remaining", 0) < 1 \
+            or not str(arming.get("armed_by", "")).startswith("human:"):
+        ledger.append("cycle.parked", {"reason": "NO LIVE ARMING — candidate parked pending human "
+                                                  "arming event", "selected_z": sel["z"],
+                                        "gate_ref": res["gate_ref"]})
+        return {"verdict": "parked_unarmed", "z": sel["z"]}
+
+    # ── PLACEBO TWIN battery (brake #4 — instrument check, registered 2026-07-10) ──────────
+    # The population template must hold a SILENT twin report (20 shifted-label twins, <4 gate
+    # passes) before any readout on it. Gates the INSTRUMENT, not the candidate; costs no look.
+    twin_path = workdir / "twins" / f"{_sha(population)[:16]}.json"
+    twin = json.loads(twin_path.read_text()) if twin_path.exists() else None
+    if not twin or twin.get("verdict") != "SILENT":
+        ledger.append("cycle.parked", {"reason": "NO SILENT TWIN REPORT for this population "
+                                                  "template — run registry.twin_check first",
+                                        "selected_z": sel["z"], "twin_path": str(twin_path)})
+        return {"verdict": "parked_no_twin", "z": sel["z"]}
+
+    arming["arms_remaining"] -= 1
+    arming_path.write_text(json.dumps(arming, indent=1))
+    ledger.append("readout.armed_fire", {"bundle_id": arming.get("bundle_id"),
+                                          "arms_remaining": arming["arms_remaining"],
+                                          "twin_report": twin_path.name})
+
     # ── STAGE: OOS READOUT (spends one look) ───────────────────────────────────────────────
     cfg = {k: sel["params"][k] for k in ("K", "kernel", "sigma", "k_nbrs", "gamma", "n_diff",
                                          "w_hour", "w_ema", "w_mom", "w_dv", "w_iv", "w_hurst")}
@@ -202,30 +233,48 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
     run_matlab("registry_readout", str(rjob))
     r = json.loads(rres.read_text())
     clauses = five_clause(r, load_pc())
+    verdict = verdict_of(clauses)                    # the None-block: CERTIFIED needs 5/5 True
     ledger.append("readout.record", {
         "readout_id": readout_id, "uplift": r["uplift"], "pooled": r["pooled_W2W4"], "S0": r["S0_W2W4"],
         "carrier_W4_n": r["carrier_W4_n"], "carrier_W4_pf": r["carrier_W4_pf"],
-        "clauses": clauses, "certified": all(clauses.values()), "result_sha256": _sha(str(rres))})
-    print(f"CYCLE DONE: readout uplift {r['uplift']:+.3f}, clauses {clauses}, "
-          f"CERTIFIED={all(clauses.values())}")
-    return {"verdict": "certified" if all(clauses.values()) else "read_not_certified",
-            "uplift": r["uplift"], "clauses": clauses}
+        "clauses": clauses, "verdict": verdict, "certified": verdict == "CERTIFIED",
+        "result_sha256": _sha(str(rres))})
+    print(f"CYCLE DONE: readout uplift {r['uplift']:+.3f}, clauses {clauses}, VERDICT={verdict}")
+    return {"verdict": verdict.lower(), "uplift": r["uplift"], "clauses": clauses}
 
 
 def five_clause(r: dict, pc: dict) -> dict:
-    """The five-clause gate as a mechanical verdict (was judged by eye). clause4 (persistence)
-    is not yet computed by the readout -> reported None (partial gate, honest)."""
+    """The five-clause gate as a mechanical verdict. c4 (persistence, registered 2026-07-10) =
+    temporal split-half of the carrier's W4 trades: PF>=1.0 in EACH half with n>=15 per half —
+    the edge must hold through both halves of the deployment window, not ride one burst."""
     sel_pf = pc["select"]["sel_pf"]
     floor = pc["select"]["min_window_trades_per_blob"]
     pw = r["per_window_pf"]
+    if all(k in r for k in ("carrier_W4_h1_pf", "carrier_W4_h2_pf")):
+        c4 = bool(r["carrier_W4_h1_n"] >= 15 and r["carrier_W4_h2_n"] >= 15
+                  and (r["carrier_W4_h1_pf"] or 0) >= 1.0 and (r["carrier_W4_h2_pf"] or 0) >= 1.0)
+    else:
+        c4 = None                                     # readout predates the c4 fields
     return {
         "c1_carrier_W4": bool(r["carrier_W4_n"] >= floor and r["carrier_W4_pf"] >= sel_pf),
         "c2_consistency": bool(sum(1 for x in pw if x >= 1.0) >= 3),
         "c3_degradation": bool(r["pooled_W2W4"] / max(r["carrier_train_pf"], 1e-9) >= 0.70),
-        "c4_persistence": None,   # not computed by current readout (70%-train anchor refit)
+        "c4_persistence": c4,
         "c5_seed_survival": bool(all(rs["jaccard"] >= 0.50 and rs["selected"] and
                                      rs["pooled"] >= r["S0_W2W4"] for rs in r["reseeds"])),
     }
+
+
+def verdict_of(clauses: dict) -> str:
+    """The None-block (registered 2026-07-10): CERTIFIED requires ALL FIVE clauses True.
+    Any None caps the verdict at CANDIDATE — an unbuilt clause can never make certification
+    EASIER. Any False = FAILED."""
+    vals = list(clauses.values())
+    if any(v is False for v in vals):
+        return "FAILED"
+    if any(v is None for v in vals):
+        return "CANDIDATE"                            # partial gate — never certifiable
+    return "CERTIFIED"
 
 
 def main() -> None:

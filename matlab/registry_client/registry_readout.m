@@ -91,6 +91,13 @@ function registry_readout(job_json)
     carrier_train_n  = sum(bid_cert == best_k);
     carrier_W4_pf    = pf_num(profits(br == best_k & M.win_id == nW));
     carrier_W4_n     = sum(br == best_k & M.win_id == nW);
+    % c4 PERSISTENCE (registered spec 2026-07-10): TEMPORAL split-half of the carrier's W4
+    % trades — the edge must hold in BOTH halves of the deployment window (PF>=1.0 each,
+    % n>=15 each). Population rows are entry_ts-sorted, so index order IS temporal order.
+    i4 = find(br == best_k & M.win_id == nW);
+    h4 = floor(numel(i4) / 2);
+    c4_h1_pf = pf_num(profits(i4(1:h4)));      c4_h1_n = h4;
+    c4_h2_pf = pf_num(profits(i4(h4+1:end)));  c4_h2_n = numel(i4) - h4;
 
     % ---- masked-train geometry z (same CRN construction as the search) ---------------------
     rs     = RandStream('mt19937ar', 'Seed', nu.shuffle_seed);
@@ -127,7 +134,12 @@ function registry_readout(job_json)
         'pooled_W2W4', pooled, 'n_pooled', n_pooled, 'uplift', pooled - s0, ...
         'carrier_blob', best_k, 'carrier_train_n', carrier_train_n, ...
         'carrier_train_pf', carrier_train_pf, 'carrier_W4_n', carrier_W4_n, ...
-        'carrier_W4_pf', carrier_W4_pf, 'reseeds', reseeds);
+        'carrier_W4_pf', carrier_W4_pf, ...
+        'carrier_W4_h1_pf', c4_h1_pf, 'carrier_W4_h1_n', c4_h1_n, ...
+        'carrier_W4_h2_pf', c4_h2_pf, 'carrier_W4_h2_n', c4_h2_n, 'reseeds', reseeds);
+    % the standardized null vector (for within-batch max-null pricing of multi-arm bundles)
+    nl = Rz.null(:); sdn = max(std(nl), 1e-12);
+    out.null_z = ((nl - mean(nl)) / sdn)';
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
         'min_window_side', job.min_window_side, 'fit', job.fit, 'select', sel_cfg, 'null', nu);
     egit = 'nogit';
