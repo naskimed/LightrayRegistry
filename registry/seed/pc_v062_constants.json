@@ -1,0 +1,30 @@
+{
+  "_provenance": {
+    "source": "Atesting2/BelkaSGL/precommit.m",
+    "source_sha256": "c997651bf584017cb6af32f5cfb03101c013052edf4c5933249b30296ae446d8",
+    "spec_version": "v0.6.2",
+    "note": "SINGLE SOURCE for SGL job contracts. Extracted field-for-field from the hashed precommit.m; MATLAB jobs are BUILT from this file by registry/tools/build_sgl_jobs.py and echo it back (pc_echo) — engines never call precommit() off a tree. Changing any value = a new registered decision, not an edit."
+  },
+  "windows": {
+    "names": ["W1", "W2", "W3", "W4"],
+    "starts": ["2018-10-01", "2020-02-01", "2022-08-01", "2025-09-01"],
+    "ends": ["2019-09-30", "2020-09-30", "2023-03-31", "2026-06-30"],
+    "roles": ["backward_only", "middle", "middle", "forward_certifier"]
+  },
+  "exclusions": { "starts": ["2019-07-01"], "ends": ["2019-07-31"] },
+  "embargo": { "left_d": 2, "right_d": 55 },
+  "min_window_side": 30,
+  "fit": {
+    "kmeans_reps": 10,
+    "n_floor": { "floor": 20, "frac": 0.01 },
+    "indeg_q": 0.05
+  },
+  "select": { "sel_pf": 1.3, "sel_min_tr": 20, "knn_k": 11, "min_window_trades_per_blob": 30 },
+  "null": { "n_shuffles": 200, "shuffle_seed": 4242, "pf_floor": 0.1, "pf_cap": 10.0, "min_trades": 10 },
+  "search_space": {
+    "sigma": [1, 15], "k_nbrs": [10, 100], "gamma": [0.01, 5.0], "n_diff": [1, 20],
+    "w_hour": [0.3, 2.0], "w_ema": [0.1, 2.5], "w_mom": [0.1, 2.0],
+    "w_dv": [0.2, 2.5], "w_iv": [0.2, 2.5], "w_hurst": [0.3, 2.0]
+  },
+  "budget": { "runs_per_k": 5, "trials_soft": 200, "seed_soft": 40 }
+}

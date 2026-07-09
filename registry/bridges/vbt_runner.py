@@ -253,13 +253,56 @@ def _engine_git() -> str:
         return "nogit"
 
 
-def score_population(rows: list[dict], side: str = "sell") -> dict:
+def tierb_train_mask(entry_ts, mask_cfg: dict):
+    """Python port of tierB_mask.m — same semantics, cross-checked against the MATLAB counts
+    on the campaign population. Train excludes every window PLUS the embargo purge
+    [start - left_d, end+1d + right_d); exclusions drop rows from window EVALUATION
+    membership (they are inside a window span, so they are already masked from train).
+    Raises (BLOCKS) if any window holds fewer than min_window_side rows.
+
+    mask_cfg: {"windows": [[name, start, end], ...], "exclusions": [[start, end], ...],
+               "embargo": {"left_d": int, "right_d": int}, "min_window_side": int}
+    Returns (is_train bool[N], win_id int[N] (0 = none), counts list[int])."""
+    import numpy as np
+    import pandas as pd
+    t = pd.to_datetime(pd.Series(list(entry_ts)))
+    n = len(t)
+    is_train = np.ones(n, dtype=bool)
+    win_id = np.zeros(n, dtype=int)
+    left = pd.Timedelta(days=mask_cfg["embargo"]["left_d"])
+    right = pd.Timedelta(days=mask_cfg["embargo"]["right_d"])
+    day = pd.Timedelta(days=1)
+    for w, (_name, a, b) in enumerate(mask_cfg["windows"], start=1):
+        a, b1 = pd.Timestamp(a), pd.Timestamp(b) + day          # inclusive end-day
+        win_id[((t >= a) & (t < b1)).to_numpy()] = w
+        is_train[((t >= a - left) & (t < b1 + right)).to_numpy()] = False
+    for a, b in mask_cfg.get("exclusions", []):
+        a, b1 = pd.Timestamp(a), pd.Timestamp(b) + day
+        win_id[((t >= a) & (t < b1)).to_numpy()] = 0
+    counts = [int((win_id == w).sum()) for w in range(1, len(mask_cfg["windows"]) + 1)]
+    floor = mask_cfg["min_window_side"]
+    for (name, _a, _b), cnt in zip(mask_cfg["windows"], counts):
+        if cnt < floor:
+            raise ValueError(f"BLOCKED: window {name} has {cnt} trades (< {floor}) — "
+                             f"partition invalid for this population")
+    return is_train, win_id, counts
+
+
+def score_population(rows: list[dict], side: str = "sell", mask_cfg: dict | None = None) -> dict:
     """Cheap Stage-1 scorecard on the R-multiple population. Because `profit` is the R-multiple,
     these rank the EDGE independent of position sizing — so the sweep can compare exit/param
     choices on equal footing (the risk-management/sizing overlay is a separate, edge-invariant
-    knob). expectancy_R = mean risk-adjusted return per trade (the per-trade edge)."""
+    knob). expectancy_R = mean risk-adjusted return per trade (the per-trade edge).
+
+    mask_cfg (tierB windows/embargo dict): score MASKED-TRAIN ONLY. Stage-1 selection must
+    never see the held-out windows — an unmasked ranking leaks the certifier windows into
+    the population choice, upstream of everything SGL touches."""
     import numpy as np
-    R = np.array([float(r["profit"]) for r in rows if r["side"] == side], dtype=float)
+    srows = [r for r in rows if r["side"] == side]
+    if mask_cfg is not None and srows:
+        is_train, _, _ = tierb_train_mask([r["entry_ts"] for r in srows], mask_cfg)
+        srows = [r for r, keep in zip(srows, is_train) if keep]
+    R = np.array([float(r["profit"]) for r in srows], dtype=float)
     n = int(R.size)
     if n == 0:
         return {"n": 0, "win_rate": float("nan"), "expectancy_R": float("nan"), "pf": float("nan"),
@@ -277,20 +320,24 @@ def score_population(rows: list[dict], side: str = "sell") -> dict:
 
 
 def whitebox_sweep(base: WhiteboxSpec, grid: dict, side: str = "sell",
-                   rank: str = "expectancy_R") -> list[dict]:
+                   rank: str = "expectancy_R", mask_cfg: dict | None = None) -> list[dict]:
     """The Stage-1 population loop: sweep whitebox parameters, score each config's R-multiple
     population. This is HOW the pipeline discovers strategy/exit/parameter settings — the things
     found manually (e.g. the 1:1 exit reward:risk) AND configurations never tried — instead of a
     human reverse-engineering them. `grid` maps WhiteboxSpec field -> list of values; every
     combination is generated and scored. Ranked descending by `rank`. (vbt_grid_sweep is the
-    ~26x-faster vectorbt path for the same grid; this is the validated single-config loop.)"""
+    ~26x-faster vectorbt path for the same grid; this is the validated single-config loop.)
+
+    mask_cfg SHOULD ALWAYS BE SUPPLIED for selection use: without it the ranking sees the
+    held-out certifier windows (leakage upstream of everything SGL touches). Unmasked calls
+    are for diagnostics only, never selection — barrier-enforced at population registration."""
     from dataclasses import replace
     from itertools import product
     keys = list(grid)
     out = []
     for combo in product(*[grid[k] for k in keys]):
         params = dict(zip(keys, combo))
-        sc = score_population(run_population(replace(base, **params))["rows"], side)
+        sc = score_population(run_population(replace(base, **params))["rows"], side, mask_cfg)
         out.append({"params": params, **sc})
     out.sort(key=lambda r: (r[rank] if r[rank] == r[rank] else -1e18), reverse=True)  # NaN last
     return out

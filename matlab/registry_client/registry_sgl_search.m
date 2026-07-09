@@ -1,50 +1,53 @@
 function registry_sgl_search(job_json)
-%REGISTRY_SGL_SEARCH  The full SGL geometry+weight SEARCH (bayesopt over 11 vars per K).
+%REGISTRY_SGL_SEARCH  The SGL geometry+weight SEARCH (bayesopt, 11 vars per K) —
+%   corrected-estimator version.
 %
-%   Mirrors main_sgl_is.m's sgl_objective_fixk EXACTLY, driven by the registry job contract and
-%   run on the registry population. For each K in job.K_values it bayesopt-optimizes
-%   {kernel, sigma, k_nbrs, gamma, n_diff, w_hour..w_hurst} to MAXIMIZE the IS separation_score,
-%   then fully evaluates the best point to get the gate z (sep_z vs the CRN null-of-the-max) and
-%   the per-blob discovery layer. Pools per-K winners, ranks, writes result.json.
+%   ESTIMATOR IDENTITY: the objective, the per-K final evaluation, and the
+%   certification readout all evaluate fit_soft_cfg with the param-hash seed —
+%   one function, one seed rule. The objective is therefore a DETERMINISTIC
+%   function of the parameters (IsObjectiveDeterministic is now TRUE, truthfully),
+%   and the searched z is the same quantity the readout will refit. This replaces
+%   the prior sgl_geom (Replicates=1, ambient global RNG stream, raw eigs, no dust
+%   extraction, full-sample preprocessing) whose reported values were functions of
+%   (params, stream position) — irreproducible from params alone.
 %
-%   job.json: belkasgl_path, population_parquet, side, K_values[], search{sigma,k_nbrs,gamma,
-%   n_diff,w_hour,w_ema,w_mom,w_dv,w_iv,w_hurst = [lo hi]}, budget{n_trials,n_seed}, null{...},
-%   rng_seed, result_path, job_hash.
+%   MASK BEFORE PREPROCESS: tierB_mask first, then preprocess_fit on masked-train
+%   rows ONLY (train-only standardization stats, matching the readout; the prior
+%   order leaked window rows into the winsorize/median/IQR stats).
+%
+%   SELECTOR IS PINNED IN THE JOB: job.selector ('z'|'sep') — the engine applies
+%   it and emits out.selected. No out.best to re-rank by hand (the campaign's
+%   K=8-by-sep vs K=2-by-z column-picking).
+%
+%   job.json: belkasgl_path, population_parquet, side, K_values[], windows{names,
+%   starts,ends}, embargo{left_d,right_d}, exclusions{starts,ends}, min_window_side,
+%   fit{kmeans_reps, n_floor{floor,frac}, indeg_q}, search{11 bounds}, budget
+%   {n_trials,n_seed,runs_per_k}, null{n_shuffles,shuffle_seed,pf_floor,pf_cap,
+%   min_trades}, selector, rng_seed, result_path, progress_path?, job_hash.
     job = jsondecode(fileread(job_json));
     addpath(job.belkasgl_path);
     if isfolder(fullfile(job.belkasgl_path, 'ICDE')), addpath(fullfile(job.belkasgl_path, 'ICDE')); end
+    assert(isfield(job, 'windows'), 'windows block REQUIRED — unmasked search is not a job kind');
+    assert(isfield(job, 'selector') && any(strcmp(job.selector, {'z','sep'})), ...
+        'job.selector (''z''|''sep'') REQUIRED — the selector is pinned in the contract');
 
     [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
-    [X, ~] = preprocess_fit(features_raw);
-    N = size(X, 1);
 
-    % ── window mask: reproduce the manual tierB masked-train (train = complement of the
-    %    W1..W4 windows + embargo purge), via YOUR tierB_mask.m unchanged. Search runs on
-    %    masked-train ONLY; the windows are held out for the OOS readout. ─────────────────
-    win_counts = [];
-    if isfield(job, 'windows')
-        PC.windows = [cellstr(string(job.windows.names(:))), ...
-                      cellstr(string(job.windows.starts(:))), ...
-                      cellstr(string(job.windows.ends(:)))];
-        PC.embargo_left_d  = job.embargo.left_d;
-        PC.embargo_right_d = job.embargo.right_d;
-        if isfield(job, 'exclusions') && ~isempty(job.exclusions.starts)
-            PC.window_exclusions = [cellstr(string(job.exclusions.starts(:))), ...
-                                    cellstr(string(job.exclusions.ends(:)))];
-        else
-            PC.window_exclusions = cell(0, 2);
-        end
-        PC.min_window_side = job.min_window_side;
-        M = tierB_mask(dates, PC);            % BLOCKS if any window < min_window_side
-        win_counts = M.counts(:)';
-        fprintf('  masked-train: %d of %d trades held out to windows %s (counts %s)\n', ...
-            sum(M.is_train), N, mat2str(1:size(PC.windows,1)), mat2str(win_counts));
-        X = X(M.is_train, :); profits = profits(M.is_train); dates = dates(M.is_train);
-        N = size(X, 1);
-    end
-    gate.pf_threshold = 1.0; gate.min_trades_per_cluster = 1;
-    gate.min_pf_consistency = 0.0; gate.min_qualifying_trades_total = 1;
+    % ── mask FIRST, then train-only preprocessing (readout-identical order) ────────────
+    M = tierB_mask(dates, mask_pc_from_job(job));        % BLOCKS if any window < min side
+    [Xtr, ~] = preprocess_fit(features_raw(M.is_train, :));
+    profits  = profits(M.is_train);
+    N = size(Xtr, 1);
+    fprintf('  masked-train: %d of %d trades | window counts %s\n', N, numel(M.is_train), ...
+        mat2str(M.counts(:)'));
+
+    C = struct('kmeans_reps', job.fit.kmeans_reps, ...
+               'n_floor', max(job.fit.n_floor.floor, ceil(job.fit.n_floor.frac * N)), ...
+               'indeg_q', job.fit.indeg_q);
     nu = job.null;
+    rs_sh  = RandStream('mt19937ar', 'Seed', nu.shuffle_seed);
+    shifts = randi(rs_sh, N - 1, nu.n_shuffles, 1);      % CRN: one shift vector, all configs
+
     s = job.search;
     vars = [ optimizableVariable('kernel', {'rbf','matern','rational'}, 'Type','categorical')
              optimizableVariable('sigma',  s.sigma(:)')
@@ -58,85 +61,88 @@ function registry_sgl_search(job_json)
              optimizableVariable('w_iv',   s.w_iv(:)')
              optimizableVariable('w_hurst',s.w_hurst(:)') ];
 
-    K_values = job.K_values(:)';
-    per_K = struct('K', {}, 'sep_score', {}, 'z', {}, 'n_blobs', {}, 'degenerate', {}, ...
-                   'params', {}, 'blob_pf', {}, 'blob_z', {});
     runs_per_k = 1;
     if isfield(job.budget, 'runs_per_k'), runs_per_k = job.budget.runs_per_k; end
+    K_values = job.K_values(:)';
+    per_K = struct('K', {}, 'sep_score', {}, 'z', {}, 'n_blobs', {}, 'degenerate', {}, ...
+                   'params', {}, 'blob_pf', {}, 'blob_z', {}, 'seed', {});
     t_all = tic;
     for K = K_values
         sep_best = -inf; pbest = [];
-        for r = 1:runs_per_k                    % replicate bayesopt runs; keep the best (GP is stochastic)
-            rng(job.rng_seed + 1000*K + r);
-            obj = @(p) -sgl_sep(p, X, profits, dates, gate, nu, K);
+        for r = 1:runs_per_k          % optimizer restarts over the SAME deterministic function
+            rng(job.rng_seed + 1000*K + r);              % acquisition randomness only
+            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K);
             bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
                 'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
                 'AcquisitionFunctionName', 'expected-improvement-plus', ...
                 'UseParallel', false, 'Verbose', 0, 'PlotFcn', []);
-            if -bo.MinObjective > sep_best, sep_best = -bo.MinObjective; pbest = bestPoint(bo); end
+            % XAtMinObjective = the OBSERVED minimizer (bestPoint may return a model-based
+            % point whose true value was never evaluated — the identity assert needs observed)
+            if -bo.MinObjective > sep_best, sep_best = -bo.MinObjective; pbest = bo.XAtMinObjective; end
         end
-        ev = sgl_full(pbest, X, profits, dates, gate, nu, K);   % z + blobs at the winner
-        per_K(end+1) = struct('K', K, 'sep_score', sep_best, 'z', ev.z, ...
-            'n_blobs', ev.n_blobs, 'degenerate', ev.degenerate, 'params', ev.params, ...
-            'blob_pf', ev.blob_pf, 'blob_z', ev.blob_z);
+        ev = eval_winner(pbest, Xtr, profits, C, nu, K, shifts);
+        assert(abs(ev.sep - sep_best) < 1e-6 || ev.degenerate, ...
+            'estimator identity violated: refit sep %.6f != searched %.6f', ev.sep, sep_best);
+        per_K(end+1) = struct('K', K, 'sep_score', ev.sep, 'z', ev.z, 'n_blobs', ev.n_blobs, ...
+            'degenerate', ev.degenerate, 'params', ev.params, 'blob_pf', ev.blob_pf, ...
+            'blob_z', ev.blob_z, 'seed', ev.seed);
         fprintf('  K=%2d  sep=%.2f  z=%.3f  blobs=%d  (%s sig=%.1f k=%d)  [%d runs, %.0fs]\n', K, ...
-            sep_best, ev.z, ev.n_blobs, ev.params.kernel, ev.params.sigma, ev.params.k_nbrs, runs_per_k, toc(t_all));
-        if isfield(job, 'progress_path')        % incremental per-K checkpoint (survives a mid-run death)
+            ev.sep, ev.z, ev.n_blobs, ev.params.kernel, ev.params.sigma, ev.params.k_nbrs, ...
+            runs_per_k, toc(t_all));
+        if isfield(job, 'progress_path')     % incremental per-K checkpoint (survives a mid-run death)
             pfid = fopen(job.progress_path, 'a');
-            fprintf(pfid, '%s\n', jsonencode(struct('K',K,'sep',sep_best,'z',ev.z, ...
-                'n_blobs',ev.n_blobs,'kernel',ev.params.kernel,'elapsed_s',toc(t_all))));
+            fprintf(pfid, '%s\n', jsonencode(struct('job_hash', job.job_hash, 'K', K, ...
+                'sep', ev.sep, 'z', ev.z, 'n_blobs', ev.n_blobs, ...
+                'kernel', ev.params.kernel, 'elapsed_s', toc(t_all))));
             fclose(pfid);
         end
     end
 
-    [~, ord] = sort([per_K.sep_score], 'descend');
-    per_K = per_K(ord);
+    % ── selection under the PINNED selector (no post-hoc column-picking) ───────────────
+    if strcmp(job.selector, 'z'), vals = [per_K.z]; else, vals = [per_K.sep_score]; end
+    [~, isel] = max(vals);
     out = struct();
     out.job_hash_echo = job.job_hash; out.side = job.side; out.n_train = N;
-    out.window_counts = win_counts;
-    out.per_K = per_K; out.best = per_K(1);
-    out.engine_stamp = struct('name','matlab_sgl','version',version,'git','server');
+    out.window_counts = M.counts(:)';
+    out.per_K = per_K;                                   % K order — a report, not a ranking
+    out.selector = job.selector; out.selected = per_K(isel);
+    out.n_evals_total = numel(K_values) * runs_per_k * job.budget.n_trials;   % realized width
+    out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
+        'min_window_side', job.min_window_side, 'fit', job.fit, 'null', nu, ...
+        'selector', job.selector, 'budget', job.budget);
+    out.engine_stamp = struct('name', 'matlab_sgl', 'version', version, 'git', 'server');
     out.elapsed_s = toc(t_all);
     fid = fopen(job.result_path, 'w'); fprintf(fid, '%s', jsonencode(out)); fclose(fid);
-    fprintf('SGL search %s: best K=%d sep=%.2f z=%.3f in %.0fs\n', ...
-        job.side, out.best.K, out.best.sep_score, out.best.z, out.elapsed_s);
+    fprintf('SGL search %s: SELECTED (by %s) K=%d sep=%.2f z=%.3f | width %d evals | %.0fs\n', ...
+        job.side, job.selector, out.selected.K, out.selected.sep_score, out.selected.z, ...
+        out.n_evals_total, out.elapsed_s);
 end
 
 
-% ---- the geometry pipeline (verbatim from sgl_objective_fixk) --------------------------------
-function labels = sgl_geom(p, X, K)
-    labels = [];
-    w  = [p.w_hour, p.w_hour, p.w_ema, p.w_mom, p.w_dv, p.w_iv, p.w_hurst];
-    Xw = X .* w;  N = size(Xw, 1);
-    try, K_ker = psd_kernels(Xw, char(p.kernel), p.sigma); catch, return; end
-    try, W = sgl_graph(Xw, K_ker, p.k_nbrs, p.gamma);      catch, return; end
-    W = max(W, 0);  d = max(full(sum(W, 2)), 1e-12);
-    Dis = spdiags(1./sqrt(d), 0, N, N);  Ks = (Dis * W * Dis);  Ks = (Ks + Ks') / 2;
-    try, [V, Lam] = eigs(Ks, K + 1, 'LM', struct('tol',1e-6,'maxit',500)); catch, return; end
-    lam = diag(Lam);  [lam, ix] = sort(lam, 'descend');  V = V(:, ix);  lam = max(lam, 0);
-    Vd = V(:, 2:end) .* (lam(2:end) .^ p.n_diff)';  rn = max(sqrt(sum(Vd.^2, 2)), 1e-12);
-    try, labels = kmeans(Vd ./ rn, K, 'Replicates', 1, 'MaxIter', 300, 'Display', 'off'); catch, labels = []; end
+%% ── the deterministic objective + the identical final evaluation ──────────────────────
+function S = sgl_objective(p, X, profits, C, nu, K)
+    try
+        bid = fit_soft_cfg(p, K, X, C, sgl_param_seed(p, K));
+        S = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
+    catch
+        S = 0;                                           % failed region — deterministic zero
+    end
 end
 
-function sep = sgl_sep(p, X, profits, dates, gate, nu, K)
-    labels = sgl_geom(p, X, K);
-    if isempty(labels), sep = 0; return; end
-    [~, ~, ~, ~, metrics] = is_eval(labels, profits, dates, gate);
-    sep = separation_score(metrics, nu.min_trades, nu.pf_floor, nu.pf_cap);
-end
-
-function ev = sgl_full(p, X, profits, dates, gate, nu, K)
-    labels = sgl_geom(p, X, K);
+function ev = eval_winner(p, X, profits, C, nu, K, shifts)
+    ev.seed = sgl_param_seed(p, K);
     ev.params = struct('kernel', char(p.kernel), 'sigma', p.sigma, 'k_nbrs', p.k_nbrs, ...
         'gamma', p.gamma, 'n_diff', p.n_diff, 'w_hour', p.w_hour, 'w_ema', p.w_ema, ...
         'w_mom', p.w_mom, 'w_dv', p.w_dv, 'w_iv', p.w_iv, 'w_hurst', p.w_hurst, 'K', K);
-    if isempty(labels)
-        ev.z = 0; ev.degenerate = true; ev.n_blobs = 0; ev.blob_pf = []; ev.blob_z = []; return;
+    try
+        bid = fit_soft_cfg(p, K, X, C, ev.seed);         % SAME fit the objective evaluated
+    catch
+        ev.sep = 0; ev.z = 0; ev.degenerate = true; ev.n_blobs = 0;
+        ev.blob_pf = []; ev.blob_z = []; return;
     end
-    N = size(X, 1);
-    rs = RandStream('mt19937ar', 'Seed', nu.shuffle_seed);
-    shifts = randi(rs, N - 1, nu.n_shuffles, 1);
-    R = sep_z(labels, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
-    ev.z = R.z; ev.degenerate = R.degenerate; ev.n_blobs = numel(unique(labels));
+    ev.sep = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
+    R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
+    ev.z = R.z; ev.degenerate = R.degenerate;
+    ev.n_blobs = numel(unique(bid(bid > 0)));
     ev.blob_pf = R.blob_pf(:)'; ev.blob_z = R.blob_z(:)';
 end
