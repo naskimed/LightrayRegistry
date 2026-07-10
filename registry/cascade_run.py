@@ -197,11 +197,21 @@ def generate_population(spec_dict: dict, pop_dir: Path, with_catalog: bool = Fal
     n_buy = int((df["side"] == "buy").sum())
     if not with_catalog:
         return str(path), _sha(str(path)), n_sell, n_buy
-    ext = pop_dir / f"pop_{key}_cat.parquet"
+    ext = pop_dir / f"pop_{key}_cat2.parquet"
     if not ext.exists():
         F = catalog_frame(pop_dir.parent / "catalog")
+        # ENTRY-BAR TIMING (leak fix 2026-07-10, caught by a z=119 smoke result): the trade
+        # enters at bar i's OPEN, but features at bar i include bar i's own close/high/low —
+        # post-entry information. Rolling features must come from the last COMPLETED bar
+        # (i-1): shift by one. Pure-clock features (hour/dow) are knowable at the open and
+        # stay unshifted. The twin battery CANNOT catch this leak class (label-shifts destroy
+        # it too) — timing correctness must be structural, exactly like the mutation audit.
+        clock_cols = ["hour_sin", "hour_cos", "dow"]
+        F_shift = F.copy()
+        roll_cols = [c for c in F.columns if c not in clock_cols]
+        F_shift[roll_cols] = F[roll_cols].shift(1)
         ts = pd.to_datetime(df["entry_ts"])
-        joined = F.reindex(ts.values)                  # exact entry-bar lookup, target-blind
+        joined = F_shift.reindex(ts.values)
         for c in F.columns:
             df[f"fc_{c}"] = joined[c].to_numpy()
         df.to_parquet(ext, index=False)
