@@ -249,19 +249,26 @@ def five_clause(r: dict, pc: dict) -> dict:
     the edge must hold through both halves of the deployment window, not ride one burst."""
     sel_pf = pc["select"]["sel_pf"]
     floor = pc["select"]["min_window_trades_per_blob"]
+    # NaN/None GUARD (fix 2026-07-10): MATLAB emits NaN as json null for windows where the
+    # selection traded nothing / empty carriers. A missing number can never PASS a clause
+    # (fail-closed) — and must never crash the verdict (both prior readout crashes were this).
+    num = lambda v, d=float("nan"): d if v is None else float(v)
+    ok = lambda v, thr: v is not None and float(v) >= thr
     pw = r["per_window_pf"]
     if all(k in r for k in ("carrier_W4_h1_pf", "carrier_W4_h2_pf")):
-        c4 = bool(r["carrier_W4_h1_n"] >= 15 and r["carrier_W4_h2_n"] >= 15
-                  and (r["carrier_W4_h1_pf"] or 0) >= 1.0 and (r["carrier_W4_h2_pf"] or 0) >= 1.0)
+        c4 = bool(num(r["carrier_W4_h1_n"], 0) >= 15 and num(r["carrier_W4_h2_n"], 0) >= 15
+                  and ok(r["carrier_W4_h1_pf"], 1.0) and ok(r["carrier_W4_h2_pf"], 1.0))
     else:
         c4 = None                                     # readout predates the c4 fields
     return {
-        "c1_carrier_W4": bool(r["carrier_W4_n"] >= floor and r["carrier_W4_pf"] >= sel_pf),
-        "c2_consistency": bool(sum(1 for x in pw if x >= 1.0) >= 3),
-        "c3_degradation": bool(r["pooled_W2W4"] / max(r["carrier_train_pf"], 1e-9) >= 0.70),
+        "c1_carrier_W4": bool(num(r["carrier_W4_n"], 0) >= floor and ok(r["carrier_W4_pf"], sel_pf)),
+        "c2_consistency": bool(sum(1 for x in pw if ok(x, 1.0)) >= 3),
+        "c3_degradation": bool(ok(r["pooled_W2W4"], 0) and ok(r["carrier_train_pf"], 1e-9)
+                               and num(r["pooled_W2W4"]) / num(r["carrier_train_pf"]) >= 0.70),
         "c4_persistence": c4,
-        "c5_seed_survival": bool(all(rs["jaccard"] >= 0.50 and rs["selected"] and
-                                     rs["pooled"] >= r["S0_W2W4"] for rs in r["reseeds"])),
+        "c5_seed_survival": bool(all(ok(rs["jaccard"], 0.50) and rs["selected"] and
+                                     ok(rs["pooled"], num(r["S0_W2W4"], float("inf")))
+                                     for rs in r["reseeds"])),
     }
 
 
