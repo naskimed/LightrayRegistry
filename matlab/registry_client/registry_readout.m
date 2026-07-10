@@ -27,8 +27,16 @@ function registry_readout(job_json)
     if isfolder(fullfile(job.belkasgl_path, 'ICDE')), addpath(fullfile(job.belkasgl_path, 'ICDE')); end
     side = job.side;
 
-    % ---- population: registry parquet (fresh) OR the legacy EA pair -----------------------
-    if isfield(job, 'population_parquet')
+    % ---- population: seats featureset OR belka6 parquet OR the legacy EA pair -------------
+    seats_mode = isfield(job, 'featureset') && strcmp(job.featureset.mode, 'seats');
+    if seats_mode
+        feats = cellstr(string(job.featureset.features(:)));
+        Dn = numel(feats);
+        s0 = [feats{:}]; hh = 5381;
+        for cc = double(s0), hh = mod(hh*33 + cc, 2^31 - 1); end
+        feat_tag = sprintf('%d', hh);
+        [raw, profits, dates] = read_population_seats(job.population_parquet, side, feats);
+    elseif isfield(job, 'population_parquet')
         [raw, profits, dates] = read_population(job.population_parquet, side);
     else
         [buy_data, sell_data] = read_belka_config(job.legacy_txt);
@@ -43,9 +51,15 @@ function registry_readout(job_json)
     % ---- mask (job-sourced constants) + train-only standardisation ------------------------
     M  = tierB_mask(dates, mask_pc_from_job(job));
     tr = M.is_train;
-    [Xtr, pp]  = preprocess_fit(raw(tr, :));
-    Xall       = zeros(N, size(Xtr, 2));
-    Xall(tr,:) = Xtr;  Xall(~tr,:) = preprocess_apply(raw(~tr, :), pp);
+    if seats_mode
+        [Xtr, pp]  = preprocess_seats_fit(raw(tr, :));
+        Xall       = zeros(N, size(Xtr, 2));
+        Xall(tr,:) = Xtr;  Xall(~tr,:) = preprocess_seats_apply(raw(~tr, :), pp);
+    else
+        [Xtr, pp]  = preprocess_fit(raw(tr, :));
+        Xall       = zeros(N, size(Xtr, 2));
+        Xall(tr,:) = Xtr;  Xall(~tr,:) = preprocess_apply(raw(~tr, :), pp);
+    end
     prof_tr    = profits(tr);
     nW         = numel(job.windows.names);
     C  = struct('kmeans_reps', job.fit.kmeans_reps, ...
@@ -54,21 +68,31 @@ function registry_readout(job_json)
     sel_cfg = job.select;
     nu = job.null;
 
-    % ---- the pinned config -----------------------------------------------------------------
+    % ---- the pinned config (seats: weights vector; belka6: the named 7-vector) --------------
     c = job.config;
-    p = struct('kernel', c.kernel, 'sigma', c.sigma, 'k_nbrs', c.k_nbrs, 'gamma', c.gamma, ...
-               'n_diff', c.n_diff, 'w_hour', c.w_hour, 'w_ema', c.w_ema, 'w_mom', c.w_mom, ...
-               'w_dv', c.w_dv, 'w_iv', c.w_iv, 'w_hurst', c.w_hurst);
     K = c.K;
-    w = [p.w_hour, p.w_hour, p.w_ema, p.w_mom, p.w_dv, p.w_iv, p.w_hurst];
+    if seats_mode
+        p = struct('kernel', c.kernel, 'sigma', c.sigma, 'k_nbrs', c.k_nbrs, ...
+                   'gamma', c.gamma, 'n_diff', c.n_diff);
+        w = double(c.w(:))';
+        for j = 1:Dn, p.(sprintf('w_%d', j)) = w(j); end
+        cert_seed = seats_param_seed(p, K, Dn, feat_tag);
+        fitfn = @(pp, KK, X, C, sd) fit_seats_cfg(pp, KK, X, C, sd, Dn);
+    else
+        p = struct('kernel', c.kernel, 'sigma', c.sigma, 'k_nbrs', c.k_nbrs, 'gamma', c.gamma, ...
+                   'n_diff', c.n_diff, 'w_hour', c.w_hour, 'w_ema', c.w_ema, 'w_mom', c.w_mom, ...
+                   'w_dv', c.w_dv, 'w_iv', c.w_iv, 'w_hurst', c.w_hurst);
+        w = [p.w_hour, p.w_hour, p.w_ema, p.w_mom, p.w_dv, p.w_iv, p.w_hurst];
+        cert_seed = sgl_param_seed(p, K);
+        fitfn = @(pp, KK, X, C, sd) fit_soft_cfg(pp, KK, X, C, sd);
+    end
 
     s0 = pf_num(profits(M.win_id >= 2));                 % S0 unconditional pooled W2:W4
 
     % ---- certified fit (param-hash seed, THE shared estimator) → select → bridge ----------
     % No try/catch: a failed certified fit must error loudly with its real diagnostics
     % (the old assert-after-swallowing-fit_seed produced 'certified refit failed' and nothing).
-    cert_seed = sgl_param_seed(p, K);
-    bid_cert  = fit_soft_cfg(p, K, Xtr, C, cert_seed);
+    bid_cert  = fitfn(p, K, Xtr, C, cert_seed);
     sel = sel_rule(bid_cert, prof_tr, sel_cfg);
     Xw  = Xall .* w;
     idx = knnsearch(Xw(tr, :), Xw, 'K', min(sel_cfg.knn_k, sum(tr)));
@@ -112,7 +136,7 @@ function registry_readout(job_json)
     reseeds = struct('seed', {}, 'pooled', {}, 'jaccard', {}, 'selected', {});
     for sd = [1 2 3]
         try
-            bid_s = fit_soft_cfg(p, K, Xtr, C, sd);
+            bid_s = fitfn(p, K, Xtr, C, sd);
         catch err
             fprintf('  reseed %d FAILED: %s\n', sd, err.message);
             reseeds(end+1) = struct('seed', sd, 'pooled', NaN, 'jaccard', NaN, 'selected', false);

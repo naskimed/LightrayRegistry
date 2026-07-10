@@ -36,7 +36,20 @@ function registry_sgl_search(job_json)
          '''sep'' = the IS separation score (main_sgl_is). The objective changes WHICH peak ' ...
          'the search finds — it is part of the frozen design, never a runtime choice.']);
 
-    if isfield(job, 'population_parquet')
+    % SEAT FEATURESET (12-seat tournament, v3): job.featureset = {mode:'seats', features:[...]}
+    % runs the N-dim path (read_population_seats / preprocess_seats / fit_seats_cfg). Absent =>
+    % the validated belka6 path, byte-identical to before.
+    seats_mode = isfield(job, 'featureset') && strcmp(job.featureset.mode, 'seats');
+    D = 0; feats = {}; feat_tag = '';
+    if seats_mode
+        feats = cellstr(string(job.featureset.features(:)));
+        D = numel(feats);
+        assert(D >= 2 && D <= 12, 'seat count must be 2..12 (FS d_max)');
+        s0 = [feats{:}]; h = 5381;
+        for c = double(s0), h = mod(h*33 + c, 2^31 - 1); end
+        feat_tag = sprintf('%d', h);
+        [features_raw, profits, dates] = read_population_seats(job.population_parquet, job.side, feats);
+    elseif isfield(job, 'population_parquet')
         [features_raw, profits, dates] = read_population(job.population_parquet, job.side);
     else                                              % legacy EA pair (same branch as the readout)
         [buy_data, sell_data] = read_belka_config(job.legacy_txt);
@@ -49,7 +62,11 @@ function registry_sgl_search(job_json)
 
     % ── mask FIRST, then train-only preprocessing (readout-identical order) ────────────
     M = tierB_mask(dates, mask_pc_from_job(job));        % BLOCKS if any window < min side
-    [Xtr, ~] = preprocess_fit(features_raw(M.is_train, :));
+    if seats_mode
+        [Xtr, ~] = preprocess_seats_fit(features_raw(M.is_train, :));
+    else
+        [Xtr, ~] = preprocess_fit(features_raw(M.is_train, :));
+    end
     profits  = profits(M.is_train);
     N = size(Xtr, 1);
     fprintf('  masked-train: %d of %d trades | window counts %s\n', N, numel(M.is_train), ...
@@ -77,13 +94,33 @@ function registry_sgl_search(job_json)
              optimizableVariable('sigma',  s.sigma(:)')
              optimizableVariable('k_nbrs', s.k_nbrs(:)', 'Type','integer')
              optimizableVariable('gamma',  s.gamma(:)')
-             optimizableVariable('n_diff', s.n_diff(:)', 'Type','integer')
+             optimizableVariable('n_diff', s.n_diff(:)', 'Type','integer') ];
+    if seats_mode
+        for j = 1:D
+            vars(end+1) = optimizableVariable(sprintf('w_%d', j), [0.1 2.5]); %#ok<AGROW>
+        end
+    else
+        vars = [vars
              optimizableVariable('w_hour', s.w_hour(:)')
              optimizableVariable('w_ema',  s.w_ema(:)')
              optimizableVariable('w_mom',  s.w_mom(:)')
              optimizableVariable('w_dv',   s.w_dv(:)')
              optimizableVariable('w_iv',   s.w_iv(:)')
              optimizableVariable('w_hurst',s.w_hurst(:)') ];
+    end
+
+    % ONE estimator per mode — objective, final eval, and readout share these handles
+    if seats_mode
+        seedfn  = @(p, K) seats_param_seed(p, K, D, feat_tag);
+        fitfn   = @(p, K, X, C) fit_seats_cfg(p, K, X, C, seats_param_seed(p, K, D, feat_tag), D);
+        paramfn = @(p, K) seats_params_struct(p, K, D, feats);
+    else
+        seedfn  = @(p, K) sgl_param_seed(p, K);
+        fitfn   = @(p, K, X, C) fit_soft_cfg(p, K, X, C, sgl_param_seed(p, K));
+        paramfn = @(p, K) struct('kernel', char(p.kernel), 'sigma', p.sigma, 'k_nbrs', p.k_nbrs, ...
+            'gamma', p.gamma, 'n_diff', p.n_diff, 'w_hour', p.w_hour, 'w_ema', p.w_ema, ...
+            'w_mom', p.w_mom, 'w_dv', p.w_dv, 'w_iv', p.w_iv, 'w_hurst', p.w_hurst, 'K', K);
+    end
 
     runs_per_k = 1;
     if isfield(job.budget, 'runs_per_k'), runs_per_k = job.budget.runs_per_k; end
@@ -95,7 +132,7 @@ function registry_sgl_search(job_json)
         obj_best = -inf; pbest = [];
         for r = 1:runs_per_k          % optimizer restarts over the SAME deterministic function
             rng(job.rng_seed + 1000*K + r);              % acquisition randomness only
-            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K, shifts, job.objective, gate_acc);
+            obj = @(p) -sgl_objective(p, Xtr, profits, C, nu, K, shifts, job.objective, gate_acc, fitfn);
             bo = bayesopt(obj, vars, 'MaxObjectiveEvaluations', job.budget.n_trials, ...
                 'NumSeedPoints', job.budget.n_seed, 'IsObjectiveDeterministic', true, ...
                 'AcquisitionFunctionName', 'expected-improvement-plus', ...
@@ -104,7 +141,7 @@ function registry_sgl_search(job_json)
             % point whose true value was never evaluated — the identity assert needs observed)
             if -bo.MinObjective > obj_best, obj_best = -bo.MinObjective; pbest = bo.XAtMinObjective; end
         end
-        ev = eval_winner(pbest, Xtr, profits, C, nu, K, shifts);
+        ev = eval_winner(pbest, Xtr, profits, C, nu, K, shifts, fitfn, seedfn, paramfn);
         if strcmp(job.objective, 'z'), refit = ev.z; else, refit = ev.sep; end
         assert(abs(refit - obj_best) < 1e-6 || ev.degenerate, ...
             'estimator identity violated: refit %s %.6f != searched %.6f', job.objective, refit, obj_best);
@@ -145,6 +182,7 @@ function registry_sgl_search(job_json)
     out.declared_width = numel(K_values) * runs_per_k * job.budget.n_trials;
     out.n_evals_total = gate_priced_configs;             % the honest realized width
     out.objective = job.objective;
+    if seats_mode, out.featureset = job.featureset; end
     out.job_hash_echo = job.job_hash;
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...
         'exclusions', getfield_default(job, 'exclusions', struct('starts',{{}},'ends',{{}})), ...
@@ -182,11 +220,11 @@ end
 
 
 %% ── the deterministic objective + the identical final evaluation ──────────────────────
-function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective, gate_acc)
+function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective, gate_acc, fitfn)
     % ONE sep_z call yields everything: R.z (z-objective), R.S_real (sep-objective, == sep_blobs
     % on the real labels), and R.null (the CRN null vector) for the gate accumulator.
     try
-        bid = fit_soft_cfg(p, K, X, C, sgl_param_seed(p, K));
+        bid = fitfn(p, K, X, C);
         R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
         if strcmp(objective, 'z'), v = R.z; else, v = R.S_real; end
         nl = R.null(:); sd = std(nl); if sd < 1e-12, sd = 1e-12; end
@@ -198,13 +236,20 @@ function v = sgl_objective(p, X, profits, C, nu, K, shifts, objective, gate_acc)
     end
 end
 
-function ev = eval_winner(p, X, profits, C, nu, K, shifts)
-    ev.seed = sgl_param_seed(p, K);
-    ev.params = struct('kernel', char(p.kernel), 'sigma', p.sigma, 'k_nbrs', p.k_nbrs, ...
-        'gamma', p.gamma, 'n_diff', p.n_diff, 'w_hour', p.w_hour, 'w_ema', p.w_ema, ...
-        'w_mom', p.w_mom, 'w_dv', p.w_dv, 'w_iv', p.w_iv, 'w_hurst', p.w_hurst, 'K', K);
+function ps = seats_params_struct(p, K, D, feats)
+    w = zeros(1, D);
+    for j = 1:D, w(j) = p.(sprintf('w_%d', j)); end
+    ps = struct('kernel', char(p.kernel), 'sigma', p.sigma, 'k_nbrs', p.k_nbrs, ...
+        'gamma', p.gamma, 'n_diff', p.n_diff, 'K', K);
+    ps.w = w(:)';
+    ps.features = {feats{:}};                            %#ok<CCAT> jsonencode -> string array
+end
+
+function ev = eval_winner(p, X, profits, C, nu, K, shifts, fitfn, seedfn, paramfn)
+    ev.seed = seedfn(p, K);
+    ev.params = paramfn(p, K);
     try
-        bid = fit_soft_cfg(p, K, X, C, ev.seed);         % SAME fit the objective evaluated
+        bid = fitfn(p, K, X, C);                         % SAME fit the objective evaluated
     catch
         ev.sep = 0; ev.z = 0; ev.degenerate = true; ev.n_blobs = 0;
         ev.blob_pf = []; ev.blob_z = []; ev.blob_n = []; return;

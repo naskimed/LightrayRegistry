@@ -51,19 +51,22 @@ def make_twin(population: str, out_path: Path, twin_i: int) -> str:
 
 
 def run_battery(population: str, side: str, workdir: Path, n_twins: int,
-                trials: int, seed_points: int) -> dict:
+                trials: int, seed_points: int, featureset: list[str] | None = None) -> dict:
+    from .canon import sha256_canon
     tdir = workdir / "twins"
     tdir.mkdir(parents=True, exist_ok=True)
     pop_key = _sha(population)[:16]
-    report_path = tdir / f"{pop_key}_{side}.json"    # SIDE-SCOPED (fix 2026-07-10): a buy
-    passes, rows = 0, []                              # battery must not clear sell readouts
+    fs_tag = "belka6" if not featureset else sha256_canon({"features": featureset})[:8]
+    report_path = tdir / f"{pop_key}_{side}_{fs_tag}.json"   # side- AND featureset-scoped
+    passes, rows = 0, []
     t0 = time.time()
     for i in range(1, n_twins + 1):
         tp = tdir / f"twin_{pop_key}_{side}_{i}.parquet"
         make_twin(population, tp, i)
         sres = tdir / f"twin_{pop_key}_{side}_{i}_search.json"
         job = build_search_job(str(tp), side, "z", str(sres), None, trials, seed_points, 1,
-                               None, 42, BELKASGL, f"twin_{pop_key}_{side}_{i}")
+                               None, 42, BELKASGL, f"twin_{pop_key}_{side}_{i}",
+                               featureset=featureset)
         job["objective"] = "z"
         jp = tdir / f"twin_{pop_key}_{side}_{i}_job.json"
         jp.write_text(json.dumps(job))
@@ -111,8 +114,10 @@ def main() -> None:
     ap.add_argument("--n-twins", type=int, default=20)
     ap.add_argument("--trials", type=int, default=40)
     ap.add_argument("--seed-points", type=int, default=10)
+    ap.add_argument("--features", help="comma-separated seat features (seats featureset twin)")
     a = ap.parse_args()
-    run_battery(a.population, a.side, Path(a.workdir), a.n_twins, a.trials, a.seed_points)
+    fs = a.features.split(",") if a.features else None
+    run_battery(a.population, a.side, Path(a.workdir), a.n_twins, a.trials, a.seed_points, fs)
 
 
 if __name__ == "__main__":

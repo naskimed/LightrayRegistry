@@ -47,7 +47,7 @@ def build_search_job(population: str | None, side: str, selector: str, result_pa
                      k_values: list[int] | None = None, rng_seed: int = 42,
                      belkasgl_path: str = BELKASGL_DEFAULT, job_hash: str = "",
                      legacy_txt: str | None = None, legacy_csv: str | None = None,
-                     objective: str = "z") -> dict:
+                     objective: str = "z", featureset: list[str] | None = None) -> dict:
     pc = load_pc()
     if not population and not (legacy_txt and legacy_csv):
         raise SystemExit("search needs --population OR --legacy-txt + --legacy-csv")
@@ -78,6 +78,9 @@ def build_search_job(population: str | None, side: str, selector: str, result_pa
     }
     if progress_path:
         job["progress_path"] = progress_path
+    if featureset:                        # the 12-seat tournament: N-dim path in the engine
+        assert 2 <= len(featureset) <= 12, "seat count must be 2..12 (FS d_max)"
+        job["featureset"] = {"mode": "seats", "features": list(featureset)}
     job["job_hash"] = job_hash or _cheap_hash(job)
     return job
 
@@ -85,7 +88,8 @@ def build_search_job(population: str | None, side: str, selector: str, result_pa
 def build_readout_job(config: dict, tag: str, result_path: str, side: str = "sell",
                       population: str | None = None, legacy_txt: str | None = None,
                       legacy_csv: str | None = None,
-                      belkasgl_path: str = BELKASGL_DEFAULT) -> dict:
+                      belkasgl_path: str = BELKASGL_DEFAULT,
+                      featureset: list[str] | None = None) -> dict:
     pc = load_pc()
     if not population and not (legacy_txt and legacy_csv):
         raise SystemExit("readout needs --population OR --legacy-txt + --legacy-csv")
@@ -105,6 +109,8 @@ def build_readout_job(config: dict, tag: str, result_path: str, side: str = "sel
     else:
         job["legacy_txt"] = legacy_txt
         job["legacy_csv"] = legacy_csv
+    if featureset:
+        job["featureset"] = {"mode": "seats", "features": list(featureset)}
     return job
 
 

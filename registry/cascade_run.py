@@ -152,9 +152,35 @@ class LookBudget:
         tmp.replace(self.path)
 
 
-def generate_population(spec_dict: dict, pop_dir: Path) -> tuple[str, str, int, int]:
-    """Materialize a whitebox population from a proposed config. Content-addressed by config."""
+def catalog_frame(cache_dir: Path):
+    """The 40-feature AFML catalog computed ONCE on the shared 5-minute bars (the bars are the
+    same for every population) and cached as parquet. Target-blind by construction (verified)."""
+    import pandas as pd
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cpath = cache_dir / "catalog_5min.parquet"
+    if cpath.exists():
+        return pd.read_parquet(cpath)
+    from .features.catalog import compute_features
+    raw = pd.read_parquet(CANONICAL)
+    raw = raw.assign(ts=pd.to_datetime(raw["ts"], utc=True)).set_index("ts")
+    if raw.index.tz is not None:
+        raw.index = raw.index.tz_convert("UTC").tz_localize(None)
+    bars = (raw.resample("5min").agg(
+        Open=("open", "first"), High=("high", "max"), Low=("low", "min"), Close=("close", "last"),
+        volume=("volume", "sum"), quote_volume=("quote_volume", "sum"),
+        taker_buy_base=("taker_buy_base", "sum")).dropna())
+    F = compute_features(bars)
+    F.to_parquet(cpath)
+    return F
+
+
+def generate_population(spec_dict: dict, pop_dir: Path, with_catalog: bool = False
+                        ) -> tuple[str, str, int, int]:
+    """Materialize a whitebox population from a proposed config. Content-addressed by config.
+    with_catalog: also join the 40 fc_* catalog columns at entry bars (the seats featureset
+    reads them by name); the extended parquet is cached separately."""
     import hashlib
+    import pandas as pd
     from .bridges.vbt_runner import WhiteboxSpec, run_population, _write_parquet
     pop_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps(spec_dict, sort_keys=True).encode()).hexdigest()[:12]
@@ -166,13 +192,20 @@ def generate_population(spec_dict: dict, pop_dir: Path) -> tuple[str, str, int, 
                             trading_days=tuple(td) if td else None, **sd)
         rp = run_population(spec)
         _write_parquet(rp["rows"], path)
-        n_sell, n_buy = len(rp["res"].sell), len(rp["res"].buy)
-    else:
-        import pandas as pd
-        df = pd.read_parquet(path)
-        n_sell = int((df["side"] == "sell").sum())
-        n_buy = int((df["side"] == "buy").sum())
-    return str(path), _sha(str(path)), n_sell, n_buy
+    df = pd.read_parquet(path)
+    n_sell = int((df["side"] == "sell").sum())
+    n_buy = int((df["side"] == "buy").sum())
+    if not with_catalog:
+        return str(path), _sha(str(path)), n_sell, n_buy
+    ext = pop_dir / f"pop_{key}_cat.parquet"
+    if not ext.exists():
+        F = catalog_frame(pop_dir.parent / "catalog")
+        ts = pd.to_datetime(df["entry_ts"])
+        joined = F.reindex(ts.values)                  # exact entry-bar lookup, target-blind
+        for c in F.columns:
+            df[f"fc_{c}"] = joined[c].to_numpy()
+        df.to_parquet(ext, index=False)
+    return str(ext), _sha(str(ext)), n_sell, n_buy
 
 
 def _mask_cfg(pc: dict) -> dict:
@@ -244,14 +277,15 @@ def _selectable(sel: dict, pc: dict) -> bool:
 
 
 def _search_stage(contract: str, population: str, side: str, workdir: Path, ledger: Ledger,
-                  tag: str, stage: str, trials: int, runs_per_k: int, seed_points: int) -> dict | None:
+                  tag: str, stage: str, trials: int, runs_per_k: int, seed_points: int,
+                  featureset: list[str] | None = None) -> dict | None:
     """One gated search stage. Returns the result dict, or None if killed at the gate."""
     sjob = workdir / f"{contract}_{tag}_{stage}_job.json"
     sres = workdir / f"{contract}_{tag}_{stage}.json"
     job = build_search_job(population, side, "z", str(sres),
                            str(workdir / f"{contract}_{tag}_{stage}_prog.jsonl"),
                            trials, seed_points, runs_per_k, None, 42, BELKASGL,
-                           f"{contract}_{tag}_{stage}")
+                           f"{contract}_{tag}_{stage}", featureset=featureset)
     job["objective"] = "z"
     ledger.append("stage.search.dispatch", {"stage": stage, "tag": tag,
                                             "declared_width": 8 * runs_per_k * trials})
@@ -270,18 +304,31 @@ def _search_stage(contract: str, population: str, side: str, workdir: Path, ledg
     return res
 
 
+def _cfg_of(params: dict, seats: bool) -> dict:
+    cfg = {k: params[k] for k in ("K", "kernel", "sigma", "k_nbrs", "gamma", "n_diff")}
+    if seats:
+        w = params["w"]
+        cfg["w"] = w if isinstance(w, list) else [w]
+    else:
+        cfg.update({k: params[k] for k in ("w_hour", "w_ema", "w_mom", "w_dv", "w_iv", "w_hurst")})
+    return cfg
+
+
 def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledger,
           budget: LookBudget, trials: int, runs_per_k: int, seed_points: int,
           spec: dict | None = None, tag: str = "",
-          full_trials: int = 200, full_runs: int = 3, full_seed_points: int = 40) -> dict:
+          full_trials: int = 200, full_runs: int = 3, full_seed_points: int = 40,
+          featureset: list[str] | None = None, max_arms: int = 4) -> dict:
     halt = workdir.parent / "var" / "HALT"
     if halt.exists():
         ledger.append("cycle.halted", {"contract": contract, "reason": "var/HALT present"})
         return {"halted": True}
     tag = tag or side
     pc = load_pc()
+    seats = bool(featureset)
 
     ledger.append("cycle.open", {"contract": contract, "side": side, "spec": spec or {"fixed": True},
+                                 "featureset": featureset or "belka6",
                                  "population": population, "population_sha256": _sha(population),
                                  "budget_remaining": budget.state["remaining"]})
 
@@ -294,7 +341,7 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
 
     # ── STAGE 1: SCREENING search + gate ───────────────────────────────────────────────────
     res = _search_stage(contract, population, side, workdir, ledger, tag, "screen",
-                        trials, runs_per_k, seed_points)
+                        trials, runs_per_k, seed_points, featureset)
     if res is None:
         return {"verdict": "no_candidate_screen"}
     if not _selectable(res["selected"], pc):
@@ -305,7 +352,7 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
 
     # ── STAGE 2: FULL-WIDTH search + gate (looks are spent only on full-width survivors) ───
     res = _search_stage(contract, population, side, workdir, ledger, tag, "full",
-                        full_trials, full_runs, full_seed_points)
+                        full_trials, full_runs, full_seed_points, featureset)
     if res is None:
         return {"verdict": "no_candidate_full"}
     sel = res["selected"]
@@ -313,6 +360,13 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
         ledger.append("cycle.parked", {"reason": "no train-selectable blob at full width",
                                         "selected_z": sel["z"]})
         return {"verdict": "parked_unselectable_full", "z": sel["z"]}
+    # BATCH: every gate-beating, train-selectable per-K entry is an ARM (one look covers all)
+    per_K = res["per_K"] if isinstance(res["per_K"], list) else [res["per_K"]]
+    arms = sorted((e for e in per_K
+                   if e.get("z") is not None and e["z"] > res["gate_ref"] and _selectable(e, pc)),
+                  key=lambda e: -e["z"])[:max_arms]
+    if not arms:
+        arms = [sel]
 
     # ── BUDGET brake ────────────────────────────────────────────────────────────────────────
     if budget.diagnostic_mode:
@@ -332,49 +386,82 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
         ledger.append("cycle.parked", {"reason": "NO LIVE ARMING", "z": sel["z"]})
         return {"verdict": "parked_unarmed", "z": sel["z"]}
 
-    # ── TWIN brake (side-scoped SILENT report required for this population template) ───────
-    twin_path = workdir / "twins" / f"{_sha(population)[:16]}_{side}.json"
+    # ── TWIN brake (side- AND featureset-scoped SILENT report required) ────────────────────
+    fs_tag = "belka6" if not seats else sha256_canon({"features": featureset})[:8]
+    twin_path = workdir / "twins" / f"{_sha(population)[:16]}_{side}_{fs_tag}.json"
     twin = json.loads(twin_path.read_text()) if twin_path.exists() else None
     if not twin or twin.get("verdict") != "SILENT":
         ledger.append("cycle.parked", {"reason": f"NO SILENT TWIN REPORT ({twin_path.name}) — "
-                                                  "run registry.twin_check for this side first",
+                                                  "run registry.twin_check for this side/featureset",
                                         "z": sel["z"]})
         return {"verdict": "parked_no_twin", "z": sel["z"]}
     ledger.append("readout.armed_fire", {"bundle_id": arming.get("bundle_id"),
                                           "arms_remaining": arming["arms_remaining"],
-                                          "twin_report": twin_path.name})
+                                          "twin_report": twin_path.name, "n_arms": len(arms)})
 
-    # ── SPEND (locked, deduplicated) then READOUT ───────────────────────────────────────────
-    cfg = {k: sel["params"][k] for k in ("K", "kernel", "sigma", "k_nbrs", "gamma", "n_diff",
-                                         "w_hour", "w_ema", "w_mom", "w_dv", "w_iv", "w_hurst")}
-    signature = sha256_canon({"pop": _sha(population), "side": side, "cfg": cfg})[:24]
-    rjob = workdir / f"{contract}_{tag}_readout_job.json"
-    rres = workdir / f"{contract}_{tag}_readout.json"
-    rj = build_readout_job(cfg, f"{contract}_{tag}", str(rres), side, population, None, None, BELKASGL)
-    rjob.write_text(json.dumps(rj, indent=1))
-    readout_id = f"{contract}_{tag}_look"
-    mode = budget.spend(readout_id, signature, _sha(str(rjob)))
+    # ── SPEND (locked, deduplicated) — ONE look covers the WHOLE batch of arms ──────────────
+    cfgs = [_cfg_of(a["params"], seats) for a in arms]
+    signature = sha256_canon({"pop": _sha(population), "side": side, "cfgs": cfgs,
+                              "fs": featureset or "belka6"})[:24]
+    readout_id = f"{contract}_{tag}_batch"
+    mode = budget.spend(readout_id, signature, sha256_canon(cfgs)[:16])
     ledger.append("readout.spend", {"readout_id": readout_id, "signature": signature,
-                                    "mode": mode, "budget_remaining": budget.state["remaining"],
+                                    "mode": mode, "n_arms": len(arms),
+                                    "budget_remaining": budget.state["remaining"],
                                     "alarm": budget.alarm})
-    try:
-        run_matlab("registry_readout", str(rjob))
-        r = json.loads(rres.read_text())
-    except Exception as e:  # noqa: BLE001 — the spend stands (spend-before-unmask); record it
-        ledger.append("readout.failed", {"readout_id": readout_id, "signature": signature,
-                                          "error": str(e)[-300:],
-                                          "note": "spend stands; identical re-run dedups to this spend"})
-        return {"verdict": "readout_failed", "error": str(e)[-200:]}
-    clauses = five_clause(r, pc)
-    verdict = verdict_of(clauses)
-    ledger.append("readout.record", {
-        "readout_id": readout_id, "signature": signature, "uplift": r.get("uplift"),
-        "pooled": r.get("pooled_W2W4"), "S0": r.get("S0_W2W4"),
-        "carrier_W4_n": r.get("carrier_W4_n"), "carrier_W4_pf": r.get("carrier_W4_pf"),
-        "clauses": clauses, "verdict": verdict, "certified": verdict == "CERTIFIED",
-        "result_sha256": _sha(str(rres))})
-    print(f"CYCLE DONE: uplift {r.get('uplift')}, VERDICT={verdict}")
-    return {"verdict": verdict.lower(), "uplift": r.get("uplift"), "clauses": clauses}
+
+    # ── the BATCH readout: every arm measured; within-batch max-null prices the selection ───
+    import numpy as np
+    arm_results, null_stack = [], []
+    for i, (arm, cfg) in enumerate(zip(arms, cfgs), 1):
+        rjob = workdir / f"{contract}_{tag}_arm{i}_job.json"
+        rres = workdir / f"{contract}_{tag}_arm{i}.json"
+        rj = build_readout_job(cfg, f"{contract}_{tag}_arm{i}", str(rres), side, population,
+                               None, None, BELKASGL, featureset=featureset)
+        rjob.write_text(json.dumps(rj, indent=1))
+        try:
+            run_matlab("registry_readout", str(rjob))
+            r = json.loads(rres.read_text())
+        except Exception as e:  # noqa: BLE001 — record and continue with the other arms
+            ledger.append("readout.failed", {"readout_id": f"{readout_id}_arm{i}",
+                                              "error": str(e)[-250:]})
+            arm_results.append({"arm": i, "K": cfg["K"], "verdict": "ENGINE_FAILED"})
+            continue
+        nz = r.get("null_z") or []
+        if isinstance(nz, list) and len(nz) > 1:
+            null_stack.append(np.asarray(nz, dtype=float))
+        arm_results.append({"arm": i, "K": cfg["K"], "r": r})
+
+    batch_gate = (float(np.quantile(np.maximum.reduce(null_stack), 0.95))
+                  if len(null_stack) > 1 else None)   # multiplicity across the batch's arms
+    summary = []
+    best = {"verdict": "failed"}
+    rank = {"certified": 3, "candidate": 2, "failed": 1, "engine_failed": 0}
+    for a in arm_results:
+        if "r" not in a:
+            summary.append({"arm": a["arm"], "K": a["K"], "verdict": "ENGINE_FAILED"})
+            continue
+        r = a["r"]
+        clauses = five_clause(r, pc)
+        verdict = verdict_of(clauses)
+        beats_batch = (batch_gate is None or (r.get("masked_z") or 0) > batch_gate)
+        if verdict == "CERTIFIED" and not beats_batch:
+            verdict = "CANDIDATE"                     # cannot certify below the within-batch bar
+        ledger.append("readout.record", {
+            "readout_id": f"{readout_id}_arm{a['arm']}", "signature": signature,
+            "K": a["K"], "uplift": r.get("uplift"), "pooled": r.get("pooled_W2W4"),
+            "S0": r.get("S0_W2W4"), "carrier_W4_n": r.get("carrier_W4_n"),
+            "carrier_W4_pf": r.get("carrier_W4_pf"), "clauses": clauses,
+            "batch_gate": batch_gate, "beats_batch_gate": beats_batch,
+            "verdict": verdict, "certified": verdict == "CERTIFIED"})
+        summary.append({"arm": a["arm"], "K": a["K"], "verdict": verdict,
+                        "uplift": r.get("uplift")})
+        if rank.get(verdict.lower(), 0) > rank.get(best["verdict"], 0):
+            best = {"verdict": verdict.lower(), "uplift": r.get("uplift"), "K": a["K"]}
+    ledger.append("batch.summary", {"readout_id": readout_id, "n_arms": len(arms),
+                                    "batch_gate": batch_gate, "arms": summary})
+    print(f"CYCLE DONE: batch of {len(arms)} arms -> {summary}")
+    return {"verdict": best["verdict"], "arms": summary}
 
 
 def five_clause(r: dict, pc: dict) -> dict:
