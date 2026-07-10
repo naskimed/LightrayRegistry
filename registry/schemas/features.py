@@ -65,7 +65,7 @@ class FamilyRegister(BaseModel):
     model_config = ConfigDict(extra="forbid")
     family_id: str
     kind: Literal["geometry", "population", "feature"]
-    param_schema: Literal["sgl_soft", "sgl_rank", "vbt_population", "mixture_t"]
+    param_schema: Literal["sgl_soft", "sgl_rank", "vbt_population", "mixture_t", "sjm_sparse"]
     key_scheme_version: str
     status: Literal["active", "dormant"] = "dormant"
 

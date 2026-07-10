@@ -1,0 +1,13 @@
+diff --git a/registry/schemas/features.py b/registry/schemas/features.py
+index 9727d38..b681cdf 100644
+--- a/registry/schemas/features.py
++++ b/registry/schemas/features.py
+@@ -65,7 +65,7 @@ class FamilyRegister(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+     family_id: str
+     kind: Literal["geometry", "population", "feature"]
+-    param_schema: Literal["sgl_soft", "sgl_rank", "vbt_population", "mixture_t"]
++    param_schema: Literal["sgl_soft", "sgl_rank", "vbt_population", "mixture_t", "sjm_sparse"]
+     key_scheme_version: str
+     status: Literal["active", "dormant"] = "dormant"
+ 

@@ -5,3 +5,4 @@ __pycache__/
 var/
 *.parquet
 pc_v062.json
+.DS_Store

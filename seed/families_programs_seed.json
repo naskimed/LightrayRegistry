@@ -1,0 +1,31 @@
+{
+ "_provenance": "TRANSCRIPTION: SEED_PACK SP-1.4 §1/§5/§6 (sha256 47664749b5d4835dc59630ff6bd37ead1a3994b772e988acdb74badeb3f22bc9) + TS_MIX_1_0 §1 (mixture_t dormant). SIGN-OFFS (user, 2026-07-08): ks_v1 placeholders ACCEPTED with hard rule DEFINE-BEFORE-FIRST-BLOCK-FREEZE; sjm_sparse silent-drop RECONCILED as register-dormant (requires patches/sjm_sparse_schema.patch); tournament order liquidity-first CONFIRMED. PARKED OPEN ITEM (so it is not dropped a second time): fam_regime as a FEATURE family (filtered sjm probabilities as columns) needs an effective-memory derivation vs the 45d dv_envelope before it can register — until derived it sits with fam_break behind the embargo-reopen gate.",
+ "families": [
+  {"payload": {"family_id": "fam_geometry_sjm_sparse", "kind": "geometry", "param_schema": "sjm_sparse", "key_scheme_version": "ks_v1", "status": "dormant"}, "source": "user decision 2026-07-08 (silent-drop reconciliation -> dormant). Sparse statistical jump model (jumpmodels pkg; Shu-Kolm-Mulvey): temporal regime LABELER; labels score via score_external_labels under the one MATLAB ruler (ruler never forks); grid axes (n_regimes, jump_penalty lambda, max_feats) defined at activation with hypothesis"},
+  {"payload": {"family_id": "fam_geometry_sgl_soft", "kind": "geometry", "param_schema": "sgl_soft", "key_scheme_version": "ks_v1", "status": "active"}, "source": "certified incumbent mode (S1_soft; Tier-B soft boards TA-1.1)"},
+  {"payload": {"family_id": "fam_geometry_sgl_rank", "kind": "geometry", "param_schema": "sgl_rank", "key_scheme_version": "ks_v1", "status": "active"}, "source": "hard-mode boards TA-1.1; paper-faithful rank builder"},
+  {"payload": {"family_id": "fam_geometry_mixture_t", "kind": "geometry", "param_schema": "mixture_t", "key_scheme_version": "ks_v1", "status": "dormant"}, "source": "TS-MIX §1 (dormant at seed; activation = discretionary event with hypothesis; soft-responsibility variant = OPEN-13 named candidate)"},
+  {"payload": {"family_id": "fam_reversal_band", "kind": "population", "param_schema": "vbt_population", "key_scheme_version": "ks_v1", "status": "dormant"}, "source": "SEED_PACK §5 P1 (first generated arm)"},
+  {"payload": {"family_id": "fam_session_time", "kind": "population", "param_schema": "vbt_population", "key_scheme_version": "ks_v1", "status": "dormant"}, "source": "SEED_PACK §5 P5 candidate"},
+  {"payload": {"family_id": "fam_breakout_channel", "kind": "population", "param_schema": "vbt_population", "key_scheme_version": "ks_v1", "status": "dormant"}, "source": "SEED_PACK §5 P5 candidate"}
+ ],
+ "programs_constants": {
+  "series": "ns5_programs",
+  "doc_id": "ns5_programs_sp14",
+  "version": 1,
+  "entries": [
+   {"key": "P0", "value": "frozen legacy pair (+G3 audited columns); reference; incumbent lives here; NEVER regenerated; compounding sizing preserved on P0 only", "finality": "provisional", "rationale": "SEED_PACK §1.1/§5"},
+   {"key": "P1", "value": {"kind": "mechanism", "family": "fam_reversal_band", "window": "anchor"}, "finality": "provisional", "rationale": "SEED_PACK §5 (zero new validation surface)"},
+   {"key": "P2", "value": {"kind": "window", "window": "Sat 22:00 -> Sun 24:00", "clock": "REGISTERED at block (masks carry a clock, SP-1.4)"}, "finality": "provisional", "rationale": "SEED_PACK §5 (weekend-liquidity replication)"},
+   {"key": "P3", "value": {"kind": "window", "window": "same 25h shape, midweek"}, "finality": "provisional", "rationale": "SEED_PACK §5 (FALSIFICATION arm — ranked above P2 in epistemic value)"},
+   {"key": "P4", "value": {"kind": "window", "window": "full week", "candidate_prebuilt": "BTCUSD_featuresD.txt (25,098 rows) pending verification (SP §8.1)"}, "finality": "provisional", "rationale": "SEED_PACK §5 (density ceiling)"},
+   {"key": "P5", "value": {"kind": "mechanism", "candidates": ["fam_session_time", "fam_breakout_channel"]}, "finality": "provisional", "rationale": "SEED_PACK §5 (cross-mechanism geometry transfer)"},
+   {"key": "P6", "value": {"kind": "exit_scale", "scales": [0.5, 1.0, 2.0], "of": "MEASURED barrier", "gated_on": "barrier-measurement pass (exits register from CSV bytes, not config)"}, "finality": "provisional", "rationale": "SEED_PACK §5/§6; never pooled across scales; barrier_ratio in [1/2,2], r_max=2 (exit-family law §1.2)"},
+   {"key": "exit_family_law", "value": "v1 exits symmetric+frozen per family; win rate never a gate quantity; trailing stops + bar-count time-stops excluded from v1 grammar (path-dependent labels break triple-barrier comparability)", "finality": "provisional", "rationale": "SEED_PACK §1.2"},
+   {"key": "sizing", "value": "fixed-R for all generated arms; volume stored on P0 for R-normalization", "finality": "provisional", "rationale": "SEED_PACK §1.3"},
+   {"key": "scouting_doctrine", "value": "label-masked feature-only parquet; novelty card (frozen_knn abstain via certified geometry, all 6 features, coordinate_class_mismatch:[hurst]) ranks scouts; graduation = boundary-session discretionary with coverage-diversity evidence (D2/D3, SP-1.2 rescope)", "finality": "provisional", "rationale": "SEED_PACK §1.5 + changelog"},
+   {"key": "scout_high_novelty_targets", "value": ["expansion/breakout", "vol-event/jump states", "weekday sessions", "level-touch"], "finality": "provisional", "rationale": "SEED_PACK §5 (incumbent samples weekend stretched-quiet states)"},
+   {"key": "renderer_requirement", "value": "one registered config -> vbt spec (Tier-1) AND MT5 .set (Level-2); rendered .sets hard-pin Clustering_Trading_Setup optimize=N (||Y flags = out-of-band selection channel, closed structurally)", "finality": "provisional", "rationale": "SEED_PACK §1.6"}
+  ]
+ }
+}

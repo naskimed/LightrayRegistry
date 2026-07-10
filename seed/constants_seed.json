@@ -5,8 +5,10 @@
     "entries": [
       {"key": "lineage_id", "value": "lin::ws_sgl_w1w4", "finality": "provisional"},
       {"key": "generation", "value": 1, "finality": "provisional"},
-      {"key": "initial_budget", "value": 10, "finality": "provisional"},
-      {"key": "alarm_remaining", "value": 5, "finality": "provisional"},
+      {"key": "initial_budget", "value": 30, "finality": "provisional",
+       "rationale": "human amendment 2026-07-10, was 10 (RATIFICATIONS_2026-07-10 sha dd8069ae; accounting on record: ~1.5 expected false certs/generation at 5%/batch x 30)"},
+      {"key": "alarm_remaining", "value": 15, "finality": "provisional",
+       "rationale": "scaled 5->15 with the budget — preserves the half-consumed early-warning semantics"},
       {"key": "diagnostic_remaining", "value": 1, "finality": "provisional"},
       {"key": "reserve_form", "value": "soft", "finality": "provisional",
        "rationale": "user decision 2026-07-07 — contract-only; the barrier does not enforce the last slot"}
