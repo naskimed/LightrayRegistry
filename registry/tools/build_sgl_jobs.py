@@ -20,10 +20,15 @@ import json
 from pathlib import Path
 
 PC_PATH = Path(__file__).resolve().parents[1] / "seed" / "pc_v062_constants.json"
+PC_ACTIVE = Path(__file__).resolve().parents[1] / "seed" / "pc_active.json"
 BELKASGL_DEFAULT = "/home/alex/Documents/Atesting7/BelkaSGL"
 
 
 def load_pc() -> dict:
+    """pc_active.json (written by the pre-signed W4 re-anchor when its trigger fires)
+    supersedes the v0.6.2 constants; otherwise the original single source."""
+    if PC_ACTIVE.exists():
+        return json.loads(PC_ACTIVE.read_text())
     return json.loads(PC_PATH.read_text())
 
 

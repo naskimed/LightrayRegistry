@@ -20,7 +20,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .cascade_run import Ledger, LookBudget, cycle, generate_population
+from .cascade_run import Ledger, LookBudget, cycle, generate_population, maybe_reanchor
 
 CLAUDE = "/home/alex/.local/bin/claude"
 
@@ -65,27 +65,34 @@ thorough negative ('no certifiable structure across the explored space') is a re
 
 
 def ledger_digest(ledger_path: Path) -> str:
+    """READ-DIET (fix 2026-07-10): the boundary agent sees VERDICTS, never out-of-sample
+    magnitudes — uplift/PF numbers are conditioning fuel a proposer could slowly overfit the
+    windows through. In-sample search quantities (z, gate) stay visible: they are free-layer."""
     if not ledger_path.exists():
         return "(no cycles yet — first proposal)"
-    out, cur = [], None
+    out = []
     for l in ledger_path.read_text().splitlines():
         e = json.loads(l); p = e["payload"]; t = e["type"]
         if t == "cycle.open":
-            cur = p.get("spec", {})
-            out.append(f"cycle: {p.get('side')} {json.dumps(cur)[:120]}")
-        elif t == "cycle.population_invalid":
-            out.append("  -> POPULATION INVALID (too sparse for the windows)")
+            out.append(f"cycle: {p.get('side')} {json.dumps(p.get('spec', {}))[:120]}")
+        elif t == "stage.baseline":
+            if not p.get("healthy"):
+                out.append(f"  -> BASELINE UNHEALTHY ({p.get('reason','')[:60]})")
         elif t == "stage.search.result":
-            out.append(f"  search: K={p['selected_K']} z={p['selected_z']:.2f} "
+            out.append(f"  search[{p.get('stage','?')}]: K={p['selected_K']} z={p['selected_z']:.2f} "
                        f"gate={p['gate_ref']:.2f} -> beats_gate={p['beats_gate']}")
         elif t == "cycle.no_candidate":
             out.append("  -> KILLED AT GATE (chance-level)")
+        elif t == "cycle.parked":
+            out.append(f"  -> PARKED: {str(p.get('reason',''))[:70]}")
+        elif t == "readout.failed":
+            out.append("  -> READOUT FAILED (engine error; spend recorded)")
         elif t == "readout.record":
-            out.append(f"  -> READOUT uplift={p['uplift']:+.3f} certified={p['certified']} "
-                       f"(fails: {[k for k, v in p['clauses'].items() if v is False]})")
-        elif t == "agent.proposal":
-            pass
-    return "\n".join(out) or "(no completed cycles yet)"
+            fails = [k for k, v in p["clauses"].items() if v is False]
+            out.append(f"  -> READOUT VERDICT={p.get('verdict')} (failing clauses: {fails or 'none'})")
+        elif t == "windowset.reanchor":
+            out.append(f"  ** WINDOWSET RE-ANCHORED: virgin certifier {p['new_certifier']} (gen 2) **")
+    return "\n".join(out) or "(no completed cycles yet)" or "(no completed cycles yet)"
 
 
 def ask_agent(digest: str, budget_remaining: int, cap: Path) -> dict:
@@ -159,8 +166,22 @@ def run(contract: str, workdir: Path, max_cycles: int, trials: int, runs_per_k: 
             ledger.append("population.failed", {"cycle": i, "error": str(e)[:200]}); continue
         ledger.append("population.generated", {"cycle": i, "tag": tag, "sha256": sha,
                                                "n_sell": n_sell, "n_buy": n_buy, "spec": spec})
-        out = cycle(contract, pop, side, workdir, ledger, budget, trials, runs_per_k, seed_points,
-                    spec=spec, tag=tag)
+        # pre-signed W4 re-anchor: self-executes when the virgin-data trigger is met
+        try:
+            from .tools.build_sgl_jobs import PC_ACTIVE
+            if maybe_reanchor(pop, PC_ACTIVE.parent, ledger):
+                print("** windowset re-anchored (gen 2, virgin certifier) **")
+        except Exception as e:  # noqa: BLE001
+            ledger.append("reanchor.check_error", {"error": str(e)[:150]})
+        # crash-continuation (fix 2026-07-10): one failed cycle must never kill the loop —
+        # the failure is recorded and the agent sees it in the next digest.
+        try:
+            out = cycle(contract, pop, side, workdir, ledger, budget, trials, runs_per_k,
+                        seed_points, spec=spec, tag=tag)
+        except Exception as e:  # noqa: BLE001
+            ledger.append("cycle.error", {"cycle": i, "tag": tag, "error": str(e)[-250:]})
+            print(f"cycle {i} ERROR (recorded, continuing): {e}")
+            continue
         print(f"cycle {i} -> {out.get('verdict')} (budget {budget.state['remaining']})")
     ledger.append("loop.max_cycles", {"max": max_cycles})
 

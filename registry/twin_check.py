@@ -55,19 +55,28 @@ def run_battery(population: str, side: str, workdir: Path, n_twins: int,
     tdir = workdir / "twins"
     tdir.mkdir(parents=True, exist_ok=True)
     pop_key = _sha(population)[:16]
-    report_path = tdir / f"{pop_key}.json"
-    passes, rows = 0, []
+    report_path = tdir / f"{pop_key}_{side}.json"    # SIDE-SCOPED (fix 2026-07-10): a buy
+    passes, rows = 0, []                              # battery must not clear sell readouts
     t0 = time.time()
     for i in range(1, n_twins + 1):
-        tp = tdir / f"twin_{pop_key}_{i}.parquet"
+        tp = tdir / f"twin_{pop_key}_{side}_{i}.parquet"
         make_twin(population, tp, i)
-        sres = tdir / f"twin_{pop_key}_{i}_search.json"
+        sres = tdir / f"twin_{pop_key}_{side}_{i}_search.json"
         job = build_search_job(str(tp), side, "z", str(sres), None, trials, seed_points, 1,
-                               None, 42, BELKASGL, f"twin_{pop_key}_{i}")
+                               None, 42, BELKASGL, f"twin_{pop_key}_{side}_{i}")
         job["objective"] = "z"
-        jp = tdir / f"twin_{pop_key}_{i}_job.json"
+        jp = tdir / f"twin_{pop_key}_{side}_{i}_job.json"
         jp.write_text(json.dumps(job))
-        run_matlab("registry_sgl_search", str(jp))
+        try:                                          # per-twin retry (fix): one engine crash
+            run_matlab("registry_sgl_search", str(jp))
+        except Exception as e:  # noqa: BLE001        # must not kill the whole battery
+            print(f"  twin {i}: engine error, retrying once ({str(e)[-80:]})")
+            try:
+                run_matlab("registry_sgl_search", str(jp))
+            except Exception as e2:  # noqa: BLE001
+                rows.append({"twin": i, "error": str(e2)[-120:]})
+                tp.unlink(missing_ok=True)
+                continue                              # skipped twin — recorded, not counted
         r = json.loads(sres.read_text())
         beat = bool(r["selected_beats_gate"])
         passes += beat

@@ -140,7 +140,10 @@ function registry_sgl_search(job_json)
     out.gate_ref = gate_ref;                             % q95 null-of-the-max at this width
     out.gate_priced_configs = gate_priced_configs;       % configs that fed the null-of-max
     out.selected_beats_gate = out.selected.z > gate_ref; % THE verdict (z-selector only)
-    out.n_evals_total = numel(K_values) * runs_per_k * job.budget.n_trials;   % realized width
+    % width accounting fix 2026-07-10: DECLARED = the budget arithmetic; REALIZED = configs
+    % actually priced into the null-of-max (bayesopt can evaluate a few extra points).
+    out.declared_width = numel(K_values) * runs_per_k * job.budget.n_trials;
+    out.n_evals_total = gate_priced_configs;             % the honest realized width
     out.objective = job.objective;
     out.job_hash_echo = job.job_hash;
     out.pc_echo = struct('windows', job.windows, 'embargo', job.embargo, ...

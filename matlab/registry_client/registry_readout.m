@@ -91,6 +91,10 @@ function registry_readout(job_json)
     carrier_train_n  = sum(bid_cert == best_k);
     carrier_W4_pf    = pf_num(profits(br == best_k & M.win_id == nW));
     carrier_W4_n     = sum(br == best_k & M.win_id == nW);
+    % carrier POOLED (middles+certifier) — the c3 degradation clause is carrier-vs-carrier
+    % (manual tierB_gate_completion semantics; the prior selection-vs-carrier mix was a bug)
+    carrier_pool_pf  = pf_num(profits(br == best_k & M.win_id >= 2));
+    carrier_pool_n   = sum(br == best_k & M.win_id >= 2);
     % c4 PERSISTENCE (registered spec 2026-07-10): TEMPORAL split-half of the carrier's W4
     % trades — the edge must hold in BOTH halves of the deployment window (PF>=1.0 each,
     % n>=15 each). Population rows are entry_ts-sorted, so index order IS temporal order.
@@ -135,6 +139,7 @@ function registry_readout(job_json)
         'carrier_blob', best_k, 'carrier_train_n', carrier_train_n, ...
         'carrier_train_pf', carrier_train_pf, 'carrier_W4_n', carrier_W4_n, ...
         'carrier_W4_pf', carrier_W4_pf, ...
+        'carrier_pool_pf', carrier_pool_pf, 'carrier_pool_n', carrier_pool_n, ...
         'carrier_W4_h1_pf', c4_h1_pf, 'carrier_W4_h1_n', c4_h1_n, ...
         'carrier_W4_h2_pf', c4_h2_pf, 'carrier_W4_h2_n', c4_h2_n, 'reseeds', reseeds);
     % the standardized null vector (for within-batch max-null pricing of multi-arm bundles)
