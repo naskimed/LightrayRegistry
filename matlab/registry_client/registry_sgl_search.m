@@ -89,7 +89,7 @@ function registry_sgl_search(job_json)
     if isfield(job.budget, 'runs_per_k'), runs_per_k = job.budget.runs_per_k; end
     K_values = job.K_values(:)';
     per_K = struct('K', {}, 'sep_score', {}, 'z', {}, 'n_blobs', {}, 'degenerate', {}, ...
-                   'params', {}, 'blob_pf', {}, 'blob_z', {}, 'seed', {});
+                   'params', {}, 'blob_pf', {}, 'blob_z', {}, 'blob_n', {}, 'seed', {});
     t_all = tic;
     for K = K_values
         obj_best = -inf; pbest = [];
@@ -110,7 +110,7 @@ function registry_sgl_search(job_json)
             'estimator identity violated: refit %s %.6f != searched %.6f', job.objective, refit, obj_best);
         per_K(end+1) = struct('K', K, 'sep_score', ev.sep, 'z', ev.z, 'n_blobs', ev.n_blobs, ...
             'degenerate', ev.degenerate, 'params', ev.params, 'blob_pf', ev.blob_pf, ...
-            'blob_z', ev.blob_z, 'seed', ev.seed);
+            'blob_z', ev.blob_z, 'blob_n', ev.blob_n, 'seed', ev.seed);
         fprintf('  K=%2d  sep=%.2f  z=%.3f  blobs=%d  (%s sig=%.1f k=%d)  [%d runs, %.0fs]\n', K, ...
             ev.sep, ev.z, ev.n_blobs, ev.params.kernel, ev.params.sigma, ev.params.k_nbrs, ...
             runs_per_k, toc(t_all));
@@ -204,11 +204,11 @@ function ev = eval_winner(p, X, profits, C, nu, K, shifts)
         bid = fit_soft_cfg(p, K, X, C, ev.seed);         % SAME fit the objective evaluated
     catch
         ev.sep = 0; ev.z = 0; ev.degenerate = true; ev.n_blobs = 0;
-        ev.blob_pf = []; ev.blob_z = []; return;
+        ev.blob_pf = []; ev.blob_z = []; ev.blob_n = []; return;
     end
     ev.sep = sep_blobs(bid, profits, nu.min_trades, nu.pf_floor, nu.pf_cap);
     R = sep_z(bid, profits, shifts, nu.min_trades, nu.pf_floor, nu.pf_cap);
     ev.z = R.z; ev.degenerate = R.degenerate;
     ev.n_blobs = numel(unique(bid(bid > 0)));
-    ev.blob_pf = R.blob_pf(:)'; ev.blob_z = R.blob_z(:)';
+    ev.blob_pf = R.blob_pf(:)'; ev.blob_z = R.blob_z(:)'; ev.blob_n = R.blob_n(:)';
 end

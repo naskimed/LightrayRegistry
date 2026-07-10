@@ -179,6 +179,28 @@ def cycle(contract: str, population: str, side: str, workdir: Path, ledger: Ledg
         print(f"CYCLE DONE: no candidate (z {sel['z']:.3f} <= gate {res['gate_ref']:.3f}).")
         return {"verdict": "no_candidate", "z": sel["z"], "gate_ref": res["gate_ref"]}
 
+    # ── SELECTABLE-BLOB precondition (free, TRAIN-only — added after look #11, 2026-07-10) ──
+    # The separation score is symmetric around PF=1, so a config can beat the gate purely by
+    # partitioning a LOSING population into loser pockets — its readout selection would be
+    # EMPTY (trade nothing) and every clause fails, wasting a look on an in-sample-predictable
+    # outcome. Require >=1 blob passing the TRAIN selection rule (PF>=sel_pf, n>=sel_min_tr)
+    # before any spend. Uses only masked-train quantities the search already computed.
+    pc = load_pc()
+    bpf = sel.get("blob_pf") or []
+    bn = sel.get("blob_n") or []
+    bpf = bpf if isinstance(bpf, list) else [bpf]
+    bn = bn if isinstance(bn, list) else [bn]
+    selectable = any(p is not None and n is not None
+                     and float(p) >= pc["select"]["sel_pf"] and float(n) >= pc["select"]["sel_min_tr"]
+                     for p, n in zip(bpf, bn))
+    if bn and not selectable:                        # only enforce when blob_n is emitted
+        ledger.append("cycle.parked", {
+            "reason": "NO TRAIN-SELECTABLE BLOB — separation is loser-pocket-only "
+                      f"(max train blob PF {max((p for p in bpf if p is not None), default=0):.2f}); "
+                      "a readout would trade nothing. Zero-cost kill.",
+            "selected_z": sel["z"]})
+        return {"verdict": "parked_unselectable", "z": sel["z"]}
+
     # ── BUDGET decision (brake #2) ─────────────────────────────────────────────────────────
     if budget.diagnostic_mode:
         ledger.append("cycle.parked", {"reason": "diagnostic mode (budget floor) — candidate held, "
