@@ -78,7 +78,10 @@ def regime_placebo(family_train: pd.DataFrame, regime_col: str, policy: str,
         s = tier2_stat(fam_p, regime_col, policy, n_boot=200, demean=demean)
         deltas.append(s.get("delta_pf", 0.0) if "delta_pf" in s else 0.0)
     q95 = float(np.quantile(deltas, 0.95))
+    # PASS/FAIL = candidate admission, deliberately NOT the twin battery's SILENT/LEAKY
+    # vocabulary: a FAIL here rejects one regime candidate; it never implies instrument
+    # failure and never writes HALT.
     return {"real_delta": real["delta_pf"], "placebo_q95": round(q95, 4),
             "placebo_deltas": [round(d, 4) for d in sorted(deltas)],
             "n_placebos": n_placebos,
-            "verdict": "SILENT" if real["delta_pf"] > q95 else "LEAKY"}
+            "verdict": "PASS" if real["delta_pf"] > q95 else "FAIL"}
