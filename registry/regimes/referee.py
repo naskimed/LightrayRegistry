@@ -37,22 +37,23 @@ def assert_causal(spec: RegimeSpec, bars: pd.DataFrame, cut_frac: float = 0.7) -
             "mismatches": 0, "causal": True}
 
 
-def planted_future_control(spec: RegimeSpec, bars: pd.DataFrame) -> dict:
-    """Prove the audit has teeth: a deliberately leaky variant (labels shifted one day
-    into the past = each day 'knows' tomorrow) MUST fail assert_causal's logic."""
-    full = compute_regime(spec, bars).set_index("label_ts")["label"]
-    leaky_full = full.shift(-1).dropna().astype("int8")       # day D shows D+1's label
-    n = int(len(bars) * 0.7)
-    part = compute_regime(spec, bars.iloc[:n]).set_index("label_ts")["label"]
-    leaky_part = part.shift(-1).dropna().astype("int8")
+def planted_future_control(bars: pd.DataFrame, cut_frac: float = 0.7) -> dict:
+    """Prove the audit has teeth against the class it exists to catch: FULL-SAMPLE
+    statistics (the historic EA mean/std-block bug). A deliberately leaky regime —
+    label(D) = close(D) > median(close over ALL days) — must show mismatching past
+    labels when history is truncated. (The other leak class, label-timing/'use
+    tomorrow's label', is defended structurally by effective_ts in the attach join,
+    not by this audit — a consistent shift never changes past labels.)"""
+    from .defs import daily_closes
+    close = daily_closes(bars)
+    leaky_full = (close > close.median()).astype("int8")
+    part = close.iloc[:int(len(close) * cut_frac)]
+    leaky_part = (part > part.median()).astype("int8")
     overlap = leaky_full.index.intersection(leaky_part.index)
-    # the LAST overlap label differs: truncated history lacks the day after its cut
     mismatches = int((leaky_full.loc[overlap] != leaky_part.loc[overlap]).sum())
-    caught = mismatches > 0
-    if not caught:
-        raise AssertionError("planted-future control NOT caught — audit has no teeth "
-                             "for this regime/cut combination")
-    return {"regime": spec.name, "planted_mismatches": mismatches, "caught": True}
+    if mismatches == 0:
+        raise AssertionError("planted-future control NOT caught — audit has no teeth")
+    return {"planted_mismatches": mismatches, "caught": True}
 
 
 def regime_placebo(family_train: pd.DataFrame, regime_col: str, policy: str,

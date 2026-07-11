@@ -44,6 +44,9 @@ def attach_regime(pop_path: str, spec: RegimeSpec, bars_path: str,
     """-> (joined parquet path, regime_key). Adds column rg_{spec.name} (int8, -1 = no
     label yet, e.g. entries before regime warmup — callers must exclude -1 rows)."""
     reg, key = regime_series(spec, bars_path, pop_dir / "regimes")
+    if not (reg["effective_ts"] > reg["label_ts"]).all():
+        raise AssertionError("regime lag violated: effective_ts must be strictly after "
+                             "label_ts for every label (label-timing leak guard)")
     stem = Path(pop_path).stem                       # pop_{sha12}
     out = pop_dir / f"{stem}_rg_{key}.parquet"
     if out.exists():
