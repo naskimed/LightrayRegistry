@@ -48,9 +48,14 @@ def regime_key(spec: RegimeSpec, source_sha: str) -> str:
 
 
 def daily_closes(bars: pd.DataFrame) -> pd.Series:
-    """Daily close series (UTC calendar days) from a canonical bar frame with ts+close."""
+    """Daily close series (UTC calendar days) from a canonical bar frame with ts+close.
+    Returned index is NAIVE UTC — the population convention (entry_ts strings are naive
+    UTC), so downstream merge_asof joins never mix aware/naive dtypes."""
     b = bars[["ts", "close"]].copy()
-    b["ts"] = pd.to_datetime(b["ts"])
+    ts = pd.to_datetime(b["ts"])
+    if ts.dt.tz is not None:
+        ts = ts.dt.tz_convert("UTC").dt.tz_localize(None)
+    b["ts"] = ts
     return b.set_index("ts")["close"].resample("1D").last().dropna()
 
 
