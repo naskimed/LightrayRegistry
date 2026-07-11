@@ -1,0 +1,68 @@
+{
+  "_doc": "Program-2 mechanism registry. HUMAN-EDITED ONLY (REG-INV-22 extended): the agent may cite these cards, never create or modify them. Every pool candidate names one card; the program's output is organized by hypothesis, not config soup.",
+  "cards": [
+    {
+      "mechanism_id": "WKND-MR",
+      "status": "active",
+      "era": "post2023",
+      "mechanism": "Post-ETF (Jan 2024) institutional liquidity concentrates in US weekday sessions; weekends are thin and retail-driven, so weekend moves overshoot and revert. reversal_pch on weekend days IS a mean-reversion shape.",
+      "economic_actor": "retail flow without institutional depth; arbitrage capital offline",
+      "predicted_sign": "weekend BUY reversion carries the edge in constructive regimes",
+      "literature": "ETF-era weekday volume 2x weekends and widening (2026); weekend effect studies 2014-2024"
+    },
+    {
+      "mechanism_id": "SAT-MR",
+      "status": "active",
+      "era": "full",
+      "mechanism": "Saturday specifically is the thinnest session of the week; the legacy EA family was built on it. Kept as the full-history control for WKND-MR.",
+      "economic_actor": "same as WKND-MR, thinnest slice",
+      "predicted_sign": "regime-dependent: buys in bull, sells in bear (measured, not assumed)",
+      "literature": "own Q2-2026 exam: Saturday buys median PF 1.30, sells 0.875"
+    },
+    {
+      "mechanism_id": "MON-REOPEN",
+      "status": "active",
+      "era": "full",
+      "mechanism": "Monday is the institutional re-entry session: weekend drift gets repriced when depth returns. Monday reversal buys had the top family median in the Q2 exam (1.369) at small n.",
+      "economic_actor": "institutional flow returning after the weekend vacuum",
+      "predicted_sign": "monday BUY reversion",
+      "literature": "own Q2-2026 exam family table"
+    },
+    {
+      "mechanism_id": "T2-TREND-SIDE",
+      "status": "active",
+      "era": "both",
+      "mechanism": "The dominant conditional structure in every measurement so far is regime asymmetry: buy edges appear in constructive (uptrend) regimes, sell edges in stressed ones. A slow trend state should pick the profitable side of a family.",
+      "economic_actor": "regime-dependent participation of trend-following and dip-buying flow",
+      "predicted_sign": "long-family in uptrend states, short-family or flat in downtrend states",
+      "literature": "own findings: buys won bull quarters, sells won bear windows (W2/W3 vs Q2-2026)"
+    },
+    {
+      "mechanism_id": "T2-VOL-SIDE",
+      "status": "active",
+      "era": "both",
+      "mechanism": "Mean-reversion pays when volatility is elevated but orderly and fails in vol collapse or explosion; a slow realized-vol tercile should gate family exposure.",
+      "economic_actor": "market-making capacity vs forced flow at vol extremes",
+      "predicted_sign": "family edge concentrated in specific vol terciles (measured which)",
+      "literature": "standard vol-regime conditioning; own vol_tercile regime (causal expanding terciles)"
+    },
+    {
+      "mechanism_id": "FUND-COND-WKND",
+      "status": "planned_needs_funding_data",
+      "era": "post2023",
+      "mechanism": "Weekend moves conditioned on the funding/positioning state going into the weekend: crowded longs into a thin session invite downside cascades; crowded shorts invite squeezes.",
+      "economic_actor": "leveraged perp positioning without weekend institutional depth",
+      "predicted_sign": "weekend SELL after extreme positive funding; weekend BUY after sustained negative funding",
+      "literature": "funding-regime evidence (crowded-short squeezes); lands with the week-4 futures data"
+    },
+    {
+      "mechanism_id": "FRI-MON-GAP",
+      "status": "planned_needs_engine_predicate",
+      "era": "post2023",
+      "mechanism": "Friday-close to Monday-open positioning transfer: the weekend session inherits Friday's institutional imbalance and hands it back Monday. Needs a session-boundary entry predicate the engine does not have yet.",
+      "economic_actor": "week-boundary inventory transfer",
+      "predicted_sign": "to be registered before any test",
+      "literature": "weekend-gap literature"
+    }
+  ]
+}

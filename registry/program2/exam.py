@@ -120,7 +120,11 @@ def run_exam(exam_id: str, exam_dir: Path, pop_dir: Path, bars_path: str,
         if r.get("standalone") and "p" in r:
             crule = next(c.get("rule_override") or {} for c in pin["candidates"]
                          if c["candidate_id"] == r["candidate_id"])
-            r["pass"] = r["p"] <= crule.get("alpha", 0.05)
+            if "min_pf" in crule:      # a pre-registered PF bar (e.g. the weekend-buy pin)
+                r["pass"] = (r["n"] >= crule.get("min_n", rule["min_n"])
+                             and r["exam_pf"] >= crule["min_pf"])
+            else:
+                r["pass"] = r["p"] <= crule.get("alpha", 0.05)
     out = {"exam_id": exam_id, "pin_sha256": pin["pin_sha256"], "epoch": pin["epoch"],
            "n_candidates": len(pin["candidates"]), "n_testable": m,
            "n_survivors": sum(1 for r in results if r.get("pass")),
