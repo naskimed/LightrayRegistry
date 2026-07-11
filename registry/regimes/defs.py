@@ -23,7 +23,7 @@ import pandas as pd
 from ..canon import sha256_canon
 
 REGIME_CODE_VERSION = "rg_v1"
-VALID_NAMES = ("trend_sma", "vol_tercile")
+VALID_NAMES = ("trend_sma", "vol_tercile", "funding_sign")
 MAX_PARAMS = 2
 _WARMUP_DAYS = 200          # expanding-quantile warmup for vol_tercile
 
@@ -61,7 +61,21 @@ def daily_closes(bars: pd.DataFrame) -> pd.Series:
 
 def compute_regime(spec: RegimeSpec, bars: pd.DataFrame) -> pd.DataFrame:
     """-> DataFrame[label_ts, label(int8), effective_ts]. label at label_ts uses data
-    <= label_ts ONLY; effective_ts = label_ts + 1 day at 00:00 UTC (daily regimes)."""
+    <= label_ts ONLY; effective_ts = label_ts + 1 day at 00:00 UTC (daily regimes).
+    `bars` is the SOURCE frame: ts+close for price regimes; ts+rate (funding settlement
+    events, final at ts) for funding_sign."""
+    if spec.name == "funding_sign":
+        n = int(spec.params.get("smooth_events", 1))
+        ts = pd.to_datetime(bars["ts"])
+        if getattr(ts.dt, "tz", None) is not None:
+            ts = ts.dt.tz_convert("UTC").dt.tz_localize(None)
+        ev = pd.Series(pd.to_numeric(bars["rate"]).to_numpy(), index=ts).sort_index()
+        roll = ev.rolling(n).mean()
+        daily = roll.resample("1D").last().ffill().dropna()   # state at each day's end
+        label = (daily > 0).astype("int8")
+        out = pd.DataFrame({"label_ts": label.index, "label": label.to_numpy()})
+        out["effective_ts"] = out["label_ts"].dt.normalize() + pd.Timedelta(days=1)
+        return out.reset_index(drop=True)
     close = daily_closes(bars)
     if spec.name == "trend_sma":
         f, s = int(spec.params["fast_d"]), int(spec.params["slow_d"])
