@@ -67,7 +67,10 @@ def _candidate_trades(c: dict, epoch: tuple[str, str], pop_dir: Path,
     else:
         df = df[df["side"] == c["side"]]
     t = pd.to_datetime(df["entry_ts"])
-    a = max(pd.Timestamp(epoch[0]), pd.Timestamp(c["pin_ts"]))
+    if c.get("past_window"):        # pinned exam on a historical never-read window:
+        a = pd.Timestamp(epoch[0])  # the pin_ts clamp is a forward-exam concept
+    else:
+        a = max(pd.Timestamp(epoch[0]), pd.Timestamp(c["pin_ts"]))
     b = pd.Timestamp(epoch[1]) + pd.Timedelta(days=1)
     return df.loc[(t >= a) & (t < b), "profit"].to_numpy()
 
