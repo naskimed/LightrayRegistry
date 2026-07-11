@@ -20,8 +20,9 @@ def select_features(df: pd.DataFrame, feature_cols: list[str],
     if len(keep) < 2:
         return keep
     corr = X[keep].corr(method="spearman").abs().fillna(0.0)
-    np.fill_diagonal(corr.values, 1.0)
-    dist = squareform((1 - corr).to_numpy(), checks=False)
+    cm = 1.0 - corr.to_numpy(copy=True)
+    np.fill_diagonal(cm, 0.0)
+    dist = squareform(cm, checks=False)
     labels = fcluster(linkage(dist, method="average"), t=dist_threshold,
                       criterion="distance")
     chosen = []
